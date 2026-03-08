@@ -193,6 +193,7 @@ async function moveMouseWithIterationApproach(
 
   logger.debug(`Using LiteLLM at ${LITELLM_BASE_URL} with model ${LITELLM_MODEL} for screenshot analysis`);
 
+  let adaptiveThreshold = deviationThreshold;  // 默认使用基础阈值
   while (iteration < maxIterations && currentDeviation > deviationThreshold) {
     iteration++;
     logger.debug(`Iteration ${iteration}: Starting iteration`);
@@ -379,7 +380,7 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
       currentDeviation = Math.sqrt(dx * dx + dy * dy);
 
         // 计算自适应阈值（基于边界框大小）- 方案一（主要）
-        const adaptiveThreshold = calculateAdaptiveThreshold(originalBoundingBox, deviationThreshold);
+        adaptiveThreshold = calculateAdaptiveThreshold(originalBoundingBox, deviationThreshold);
         
         // 检查鼠标是否在边界框附近 - 方案二（辅助，仅对大目标使用）
         const isLargeTarget = originalBoundingBox && originalBoundingBox.width > 100 && originalBoundingBox.height > 50;
@@ -521,8 +522,8 @@ export async function handleComputerToolUse(
     if (isClickMouseToolUseBlock(block)) {
         // 点击前先使用迭代逼近移动到目标位置
         // 如果没有提供坐标，使用当前鼠标位置作为初始参考点
-        let targetCoords = block.input.coordinates;
-        if (!targetCoords) {
+        let targetCoords: Coordinates = block.input.coordinates!;
+        if (!block.input.coordinates) {
           // 获取当前鼠标位置
           const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
             method: 'POST',
@@ -558,8 +559,8 @@ export async function handleComputerToolUse(
       }
     if (isPressMouseToolUseBlock(block)) {
         // 按压前先移动到目标位置
-        let targetCoords = block.input.coordinates;
-        if (!targetCoords) {
+        let targetCoords: Coordinates = block.input.coordinates!;
+        if (!block.input.coordinates) {
           const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -619,8 +620,8 @@ export async function handleComputerToolUse(
       }
     if (isScrollToolUseBlock(block)) {
         // 滚动前先移动到目标位置
-        let targetCoords = block.input.coordinates;
-        if (!targetCoords) {
+        let targetCoords: Coordinates = block.input.coordinates!;
+        if (!block.input.coordinates) {
           const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
