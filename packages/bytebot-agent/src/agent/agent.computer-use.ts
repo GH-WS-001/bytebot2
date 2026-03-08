@@ -52,27 +52,55 @@ function calculateTextTimeout(text: string, delay?: number): number {
   return timeout;
 }
 
-// 通用的 fetch 包装函数，带超时控制
+// 通用的 fetch 包装函数，带超时控制和重试机制
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
-  timeoutMs: number = 60000
+  timeoutMs: number = 60000,
+  maxRetries: number = 3
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let lastError: Error | null = null;
   
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     
-    clearTimeout(timeout);
-    return response;
-  } catch (error) {
-    clearTimeout(timeout);
-    throw error;
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeout);
+      
+      // 如果响应成功，直接返回
+      if (response.ok) {
+        return response;
+      }
+      
+      // 如果是服务器错误（5xx），重试
+      if (response.status >= 500 && attempt < maxRetries) {
+        console.log(`Attempt ${attempt}/${maxRetries} failed with status ${response.status}, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // 指数退避
+        continue;
+      }
+      
+      return response;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error as Error;
+      
+      // 如果是超时错误或网络错误，重试
+      if (attempt < maxRetries) {
+        console.log(`Attempt ${attempt}/${maxRetries} failed: ${lastError.message}, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // 指数退避
+        continue;
+      }
+    }
   }
+  
+  // 所有重试都失败了
+  throw lastError || new Error('All retry attempts failed');
 }
 
 

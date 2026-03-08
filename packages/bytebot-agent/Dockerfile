@@ -24,6 +24,12 @@ RUN npm install
 
 RUN npm run build
 
+# Set Node.js timeout environment variables
+# 解决 fetch 超时问题
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+ENV UV_THREADPOOL_SIZE=128
+ENV NODE_NO_WARNINGS=1
+
 # Run the application
 CMD ["npm", "run", "start:prod"] 
 
