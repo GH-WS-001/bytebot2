@@ -330,7 +330,7 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
                 ],
               },
             ],
-            max_tokens: 500,
+            max_tokens: 2000,
             temperature: 0.1,
           }),
         });
@@ -455,6 +455,17 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
 
       lastActualPosition = apiPosition;
 
+      // 检查是否满足停止条件
+      if (currentDeviation <= adaptiveThreshold) {
+        logger.debug(`Iteration ${iteration}: Deviation within adaptive threshold, stopping`);
+        break;
+      }
+      
+      if (isNearBoundingBox) {
+        logger.debug(`Iteration ${iteration}: Mouse is within target bounding box, stopping`);
+        break;
+      }
+      
       await new Promise((resolve) => setTimeout(resolve, 100));
     } catch (error) {
       logger.error(`Iteration ${iteration} failed: ${error.message}`);
