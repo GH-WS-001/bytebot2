@@ -519,12 +519,23 @@ export async function handleComputerToolUse(
       await traceMouse(block.input);
     }
     if (isClickMouseToolUseBlock(block)) {
-      // 点击前先使用迭代逼近移动到目标位置
-      if (block.input.coordinates) {
-        // TODO: 从任务上下文中获取目标描述
-        
-        const moveResult = await moveMouseWithIterationApproach(block.input.coordinates, block.input.targetDescription, logger);
-        // 只有移动成功（偏差<20）才执行点击
+        // 点击前先使用迭代逼近移动到目标位置
+        // 如果没有提供坐标，使用当前鼠标位置作为初始参考点
+        let targetCoords = block.input.coordinates;
+        if (!targetCoords) {
+          // 获取当前鼠标位置
+          const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'cursor_position' }),
+          });
+          const cursorPosResult = await cursorPosResponse.json();
+          targetCoords = cursorPosResult.coordinates;
+          logger.debug(`No coordinates provided, using current cursor position: (${targetCoords.x}, ${targetCoords.y})`);
+        }
+
+        const moveResult = await moveMouseWithIterationApproach(targetCoords, block.input.targetDescription, logger);
+        // 只有移动成功才执行点击
         if (!moveResult.success) {
           return {
             type: MessageContentType.ToolResult,
@@ -544,16 +555,22 @@ export async function handleComputerToolUse(
           clickCount: block.input.clickCount,
           holdKeys: block.input.holdKeys,
         });
-      } else {
-        await clickMouse(block.input);
       }
-    }
     if (isPressMouseToolUseBlock(block)) {
-      // 按压前先移动到目标位置（如果有坐标）
-      if (block.input.coordinates) {
-        // TODO: 从任务上下文中获取目标描述
-        
-        const moveResult = await moveMouseWithIterationApproach(block.input.coordinates, block.input.targetDescription, logger);
+        // 按压前先移动到目标位置
+        let targetCoords = block.input.coordinates;
+        if (!targetCoords) {
+          const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'cursor_position' }),
+          });
+          const cursorPosResult = await cursorPosResponse.json();
+          targetCoords = cursorPosResult.coordinates;
+          logger.debug(`No coordinates provided, using current cursor position: (${targetCoords.x}, ${targetCoords.y})`);
+        }
+
+        const moveResult = await moveMouseWithIterationApproach(targetCoords, block.input.targetDescription, logger);
         if (!moveResult.success) {
           return {
             type: MessageContentType.ToolResult,
@@ -567,51 +584,54 @@ export async function handleComputerToolUse(
             is_error: true,
           };
         }
-        // 不传入坐标，避免Desktop端再次移动
         await pressMouse({
           button: block.input.button,
           press: block.input.press,
         });
-      } else {
-        await pressMouse(block.input);
       }
-    }
     if (isDragMouseToolUseBlock(block)) {
-      // 拖拽前先使用迭代逼近移动到起点
-      if (block.input.path && block.input.path.length > 0) {
-        // TODO: 从任务上下文中获取目标描述
-        
-        const moveResult = await moveMouseWithIterationApproach(block.input.path[0], block.input.targetDescription, logger);
-        if (!moveResult.success) {
-          return {
-            type: MessageContentType.ToolResult,
-            tool_use_id: block.id,
-            content: [
-              {
-                type: MessageContentType.Text,
-                text: `ERROR: Mouse movement failed. Deviation ${moveResult.finalDeviation.toFixed(2)}px exceeds threshold. Drag not executed.`,
-              },
-            ],
-            is_error: true,
-          };
+        // 拖拽前先移动到起始位置
+        if (block.input.path && block.input.path.length > 0) {
+          const moveResult = await moveMouseWithIterationApproach(block.input.path[0], block.input.targetDescription, logger);
+          if (!moveResult.success) {
+            return {
+              type: MessageContentType.ToolResult,
+              tool_use_id: block.id,
+              content: [
+                {
+                  type: MessageContentType.Text,
+                  text: `ERROR: Mouse movement failed. Deviation ${moveResult.finalDeviation.toFixed(2)}px exceeds threshold. Drag not executed.`,
+                },
+              ],
+              is_error: true,
+            };
+          }
+          // 不传入第一个坐标，避免Desktop端再次移动
+          const pathWithoutFirst = block.input.path.slice(1);
+          await dragMouse({
+            path: pathWithoutFirst,
+            button: block.input.button,
+            holdKeys: block.input.holdKeys,
+          });
+        } else {
+          await dragMouse(block.input);
         }
-        // 不传入第一个坐标，避免Desktop端再次移动到起点
-        const newPath = block.input.path.slice(1);
-        await dragMouse({
-          button: block.input.button,
-          path: newPath,
-          holdKeys: block.input.holdKeys,
-        });
-      } else {
-        await dragMouse(block.input);
       }
-    }
     if (isScrollToolUseBlock(block)) {
-      // 滚动前先使用迭代逼近移动到目标位置
-      if (block.input.coordinates) {
-        // TODO: 从任务上下文中获取目标描述
-        
-        const moveResult = await moveMouseWithIterationApproach(block.input.coordinates, block.input.targetDescription, logger);
+        // 滚动前先移动到目标位置
+        let targetCoords = block.input.coordinates;
+        if (!targetCoords) {
+          const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'cursor_position' }),
+          });
+          const cursorPosResult = await cursorPosResponse.json();
+          targetCoords = cursorPosResult.coordinates;
+          logger.debug(`No coordinates provided, using current cursor position: (${targetCoords.x}, ${targetCoords.y})`);
+        }
+
+        const moveResult = await moveMouseWithIterationApproach(targetCoords, block.input.targetDescription, logger);
         if (!moveResult.success) {
           return {
             type: MessageContentType.ToolResult,
@@ -625,16 +645,12 @@ export async function handleComputerToolUse(
             is_error: true,
           };
         }
-        // 不传入坐标，避免Desktop端再次移动
         await scroll({
           direction: block.input.direction,
           scrollCount: block.input.scrollCount,
           holdKeys: block.input.holdKeys,
         });
-      } else {
-        await scroll(block.input);
       }
-    }
     if (isTypeKeysToolUseBlock(block)) {
       await typeKeys(block.input);
     }
