@@ -148,6 +148,16 @@ async function moveMouseWithIterationApproach(
   maxIterations: number = 3,
   deviationThreshold: number = 20,
 ): Promise<{ success: boolean; iterations: number; finalDeviation: number; finalPosition: Coordinates }> {
+    // 如果 coordinates 是字符串，先解析为对象
+    if (typeof targetCoordinates === 'string') {
+      try {
+        targetCoordinates = JSON.parse(targetCoordinates);
+        logger.debug('Parsed string coordinates:', targetCoordinates);
+      } catch (e) {
+        logger.error('Failed to parse coordinates string:', targetCoordinates);
+      }
+    }
+
   // 修复LLM返回的坐标格式错误: {"x": 704, 563} -> {"x": 704, "y": 563}
   if (targetCoordinates && typeof targetCoordinates.x === 'number' && typeof targetCoordinates.y === 'undefined') {
     const str = JSON.stringify(targetCoordinates);
