@@ -308,6 +308,21 @@ export class ProxyService implements BytebotAgentService {
       } as TextContentBlock);
     }
 
+      // Check if LLM mentioned tool calls in reasoning but didn't actually call them
+      if (!message.tool_calls || message.tool_calls.length === 0) {
+        const reasoningText = message['reasoning_content'] || message['thinking_blocks']?.[0]?.thinking || '';
+        if (reasoningText.includes('computer_screenshot') || reasoningText.includes('computer_click')) {
+          this.logger.warn('LLM mentioned tool calls in reasoning but did not actually call them');
+          this.logger.debug(`Reasoning content: ${reasoningText.substring(0, 200)}`);
+          // Add a text response indicating the issue
+          contentBlocks.push({
+            type: MessageContentType.Text,
+            text: 'I need to take a screenshot to verify the current state, but I encountered an issue. Let me try again.',
+          } as TextContentBlock);
+          return contentBlocks;
+        }
+      }
+      
     // Handle tool calls
     if (message.tool_calls && message.tool_calls.length > 0) {
       for (const toolCall of message.tool_calls) {
