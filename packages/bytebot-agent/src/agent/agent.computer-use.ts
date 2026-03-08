@@ -746,6 +746,7 @@ export async function handleComputerToolUse(
           // 如果没有提供坐标，在当前位置滚动
           
           await scroll({
+            coordinates: block.input.coordinates,
             direction: block.input.direction,
             scrollCount: block.input.scrollCount,
             holdKeys: block.input.holdKeys,
