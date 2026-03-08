@@ -5,6 +5,9 @@ model_list:
         model: anthropic/qwen3.5:35b
         api_base: http://169.254.79.23:11434/v1
         drop_params: true  # Drop Anthropic-specific params for Ollama
+        # 强制使用 OpenAI 格式的响应处理
+        supports_parallel_function_calling: false
+        supports_vision: false
     # Anthropic Models
     - model_name: claude-opus-4
       litellm_params:
@@ -34,3 +37,11 @@ model_list:
       litellm_params:
         model: gemini/gemini-2.5-flash
         api_key: os.environ/GEMINI_API_KEY
+
+litellm_settings:
+  # 设置默认模型参数
+  set_verbose: true
+  # 启用回退机制
+  enable_preview_models: true
+  # 处理空响应
+  drop_params: true
