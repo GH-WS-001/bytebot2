@@ -5,9 +5,6 @@ model_list:
         model: anthropic/qwen3.5:35b
         api_base: http://169.254.79.23:11434/v1
         drop_params: true  # Drop Anthropic-specific params for Ollama
-        # 强制使用 OpenAI 格式的响应处理
-        supports_parallel_function_calling: false
-        supports_vision: false
     # Anthropic Models
     - model_name: claude-opus-4
       litellm_params:
