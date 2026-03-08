@@ -553,7 +553,7 @@ export async function handleComputerToolUse(
         // 不传入坐标，避免Desktop端再次移动
         await clickMouse({
           button: block.input.button,
-          clickCount: block.input.clickCount,
+          clickCount: block.input.clickCount || 1,
           holdKeys: block.input.holdKeys,
         });
       }

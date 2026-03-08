@@ -93,7 +93,7 @@ export const _clickMouseTool = {
         description: 'A concise description of the UI element to move to (e.g., "the blue Login button", "the verification code input box"). Used to visually identify the target element\'s bounding box (x, y, width, height) for precise positioning during mouse movement.',
       },
     },
-    required: ['coordinates', 'button', 'clickCount', 'targetDescription'],
+    required: ['coordinates', 'button', 'targetDescription'],
   },
 };
 
