@@ -428,20 +428,55 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
 
       logger.debug(`Iteration ${iteration}: Using detected mouse at (${detectedPosition.x}, ${detectedPosition.y})`);
 
-      // 5. 计算偏差（截图上的偏差）
-      // 步骤3: 用目标位置减去鼠标位置得到偏差量
+      // 5. 计算偏差（基于边界框的智能偏差计算）
+      // 计算到中心点的偏移（用于移动计算）
       const dx = detectedTarget.x - detectedPosition.x;
       const dy = detectedTarget.y - detectedPosition.y;
-      currentDeviation = Math.sqrt(dx * dx + dy * dy);
-
-        // 计算自适应阈值（基于边界框大小）- 方案一（主要）
-        adaptiveThreshold = calculateAdaptiveThreshold(originalBoundingBox, deviationThreshold);
+      
+      // 如果有边界框信息，计算鼠标到边界框的距离
+      if (originalBoundingBox) {
+        const bbox = originalBoundingBox;
+        const mouse = detectedPosition;
         
-        // 检查鼠标是否在边界框附近 - 方案二（辅助，仅对大目标使用）
-        const isLargeTarget = originalBoundingBox && originalBoundingBox.width > 100 && originalBoundingBox.height > 50;
-        const isNearBoundingBox = isLargeTarget && isMouseNearBoundingBox(detectedPosition, originalBoundingBox, 5);
+        // 计算鼠标到边界框的距离
+        // 如果鼠标在边界框内，距离为 0
+        // 如果在边界框外，计算到最近边界的距离
+        let distanceX = 0;
+        let distanceY = 0;
         
-        logger.debug(`Iteration ${iteration}: Screenshot deviation = ${currentDeviation.toFixed(2)}px (dx=${dx}, dy=${dy}), adaptive threshold = ${adaptiveThreshold.toFixed(2)}px${isLargeTarget ? ', near bounding box = ' + isNearBoundingBox : ''}`);
+        // X 方向距离
+        if (mouse.x < bbox.x) {
+          distanceX = bbox.x - mouse.x;  // 在左边
+        } else if (mouse.x > bbox.x + bbox.width) {
+          distanceX = mouse.x - (bbox.x + bbox.width);  // 在右边
+        }
+        // 否则在边界框内，distanceX = 0
+        
+        // Y 方向距离
+        if (mouse.y < bbox.y) {
+          distanceY = bbox.y - mouse.y;  // 在上边
+        } else if (mouse.y > bbox.y + bbox.height) {
+          distanceY = mouse.y - (bbox.y + bbox.height);  // 在下边
+        }
+        // 否则在边界框内，distanceY = 0
+        
+        // 计算综合偏差
+        currentDeviation = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
+        
+        logger.debug(`Iteration ${iteration}: Bounding box deviation = ${currentDeviation.toFixed(2)}px (distanceX=${distanceX}, distanceY=${distanceY}), mouse at (${mouse.x}, ${mouse.y}), bbox: [${bbox.x}, ${bbox.y}, ${bbox.width}x${bbox.height}]`);
+      } else {
+        // 没有边界框信息，使用传统的中心点距离
+        currentDeviation = Math.sqrt(dx * dx + dy * dy);
+        
+        logger.debug(`Iteration ${iteration}: Center point deviation = ${currentDeviation.toFixed(2)}px (dx=${dx}, dy=${dy})`);
+      }
+      
+      // 计算自适应阈值和边界框检查
+      adaptiveThreshold = calculateAdaptiveThreshold(originalBoundingBox, deviationThreshold);
+      
+      const isLargeTarget = originalBoundingBox && originalBoundingBox.width > 100 && originalBoundingBox.height > 50;
+      const isNearBoundingBox = isLargeTarget && isMouseNearBoundingBox(detectedPosition, originalBoundingBox, 5);
+      
       // 步骤4: 用API位置加上偏差量得到最终要设置的鼠标位置
       const newTargetX = apiPosition.x + dx;
       const newTargetY = apiPosition.y + dy;
