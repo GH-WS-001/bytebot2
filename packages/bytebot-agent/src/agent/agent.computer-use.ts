@@ -198,6 +198,15 @@ async function moveMouseWithIterationApproach(
       try {
         targetCoordinates = JSON.parse(targetCoordinates);
         logger.debug('Parsed string coordinates:', targetCoordinates);
+      
+      // 如果解析后是数组格式 [x, y]，转换为对象格式
+      if (Array.isArray(targetCoordinates) && targetCoordinates.length >= 2) {
+        targetCoordinates = {
+          x: targetCoordinates[0],
+          y: targetCoordinates[1]
+        };
+        logger.debug('Converted array coordinates to object:', targetCoordinates);
+      }
       } catch (e) {
         logger.error('Failed to parse coordinates string:', targetCoordinates);
       }
