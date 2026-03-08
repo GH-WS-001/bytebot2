@@ -728,40 +728,29 @@ export async function handleComputerToolUse(
           await dragMouse(block.input);
         }
       }
-    if (isScrollToolUseBlock(block)) {
-        // 滚动前先移动到目标位置
-        let targetCoords: Coordinates = block.input.coordinates!;
-        if (!block.input.coordinates) {
-          const cursorPosResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'cursor_position' }),
+      if (isScrollToolUseBlock(block)) {
+          // 滚动操作：如果提供了坐标，直接移动到该位置（不迭代）
+          // 滚动操作不需要精确的偏差验证，因为目标是滚动内容而非精确定位
+          if (block.input.coordinates) {
+            // 直接移动到指定位置，不使用迭代逼近
+            logger.debug(`Moving mouse to scroll position: (${block.input.coordinates.x}, ${block.input.coordinates.y})`);
+            await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'move_mouse',
+                coordinates: block.input.coordinates,
+              }),
+            });
+          }
+          // 如果没有提供坐标，在当前位置滚动
+          
+          await scroll({
+            direction: block.input.direction,
+            scrollCount: block.input.scrollCount,
+            holdKeys: block.input.holdKeys,
           });
-          const cursorPosResult = await cursorPosResponse.json();
-          targetCoords = cursorPosResult.coordinates;
-          logger.debug(`No coordinates provided, using current cursor position: (${targetCoords.x}, ${targetCoords.y})`);
         }
-
-        const moveResult = await moveMouseWithIterationApproach(targetCoords, block.input.targetDescription, logger);
-        if (!moveResult.success) {
-          return {
-            type: MessageContentType.ToolResult,
-            tool_use_id: block.id,
-            content: [
-              {
-                type: MessageContentType.Text,
-                text: `ERROR: Mouse movement failed. Deviation ${moveResult.finalDeviation.toFixed(2)}px exceeds threshold. Scroll not executed.`,
-              },
-            ],
-            is_error: true,
-          };
-        }
-        await scroll({
-          direction: block.input.direction,
-          scrollCount: block.input.scrollCount,
-          holdKeys: block.input.holdKeys,
-        });
-      }
     if (isTypeKeysToolUseBlock(block)) {
       await typeKeys(block.input);
     }
