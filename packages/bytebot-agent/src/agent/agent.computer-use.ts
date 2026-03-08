@@ -406,7 +406,7 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
     }
   }
 
-  const success = currentDeviation <= deviationThreshold;
+    const success = currentDeviation <= adaptiveThreshold;
   logger.debug(
     `Iterative movement completed: ${success ? 'SUCCESS' : 'FAILED'}, ` +
       `iterations=${iteration}, final deviation=${currentDeviation.toFixed(2)}px`,
