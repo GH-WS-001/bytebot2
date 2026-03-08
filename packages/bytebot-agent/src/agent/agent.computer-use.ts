@@ -37,6 +37,52 @@ function safeParseLLMResponse(text: string | null | undefined): any | null {
   // 移除所有 Markdown 代码块标记
   let cleaned = text.replace(/```(json)?\s*/gi, '').replace(/```\s*$/gm, '').trim();
   
+  // 尝试解析为数组格式（Qwen 模型可能返回数组）
+  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrayMatch) {
+    try {
+      const arr = JSON.parse(arrayMatch[0]);
+      if (Array.isArray(arr) && arr.length > 0) {
+        // 从数组中提取鼠标和目标位置
+        const result: any = { mousePosition: null, targetPosition: null, confidence: 'medium' };
+        
+        for (const item of arr) {
+          if (item.label && item.label.toLowerCase().includes('mouse')) {
+            // 鼠标位置: {"bbox_2d": [x, y], "label": "Mouse Cursor Position"}
+            if (item.bbox_2d && Array.isArray(item.bbox_2d) && item.bbox_2d.length >= 2) {
+              result.mousePosition = { x: item.bbox_2d[0], y: item.bbox_2d[1] };
+            }
+          } else if (item.label && item.label.toLowerCase().includes('target')) {
+            // 目标位置: {"bbox_2d": [x, y, width, height], "label": "Target Element"}
+            if (item.bbox_2d && Array.isArray(item.bbox_2d)) {
+              if (item.bbox_2d.length >= 4) {
+                result.targetPosition = {
+                  x: item.bbox_2d[0],
+                  y: item.bbox_2d[1],
+                  width: item.bbox_2d[2],
+                  height: item.bbox_2d[3]
+                };
+              } else if (item.bbox_2d.length >= 2) {
+                result.targetPosition = { x: item.bbox_2d[0], y: item.bbox_2d[1] };
+              }
+            }
+          }
+        }
+        
+        // 如果只找到一个元素，假设它是鼠标位置
+        if (arr.length === 1 && !result.mousePosition && arr[0].bbox_2d) {
+          result.mousePosition = { x: arr[0].bbox_2d[0], y: arr[0].bbox_2d[1] };
+        }
+        
+        if (result.mousePosition) {
+          return result;
+        }
+      }
+    } catch (e) {
+      // 数组解析失败，继续尝试对象格式
+    }
+  }
+  
   // 提取第一个 { ... } 对象（支持跨行）
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) return null;
@@ -62,7 +108,6 @@ function safeParseLLMResponse(text: string | null | undefined): any | null {
     }
   }
 }
-
 /**
  * 迭代逼近移动鼠标
  * 使用LiteLLM分析截图，识别鼠标和目标位置，迭代调整直到偏差小于阈值
