@@ -74,6 +74,15 @@ function safeParseLLMResponse(text: string | null | undefined): any | null {
  * @param target LLM 返回的目标位置（可能是单点或边界框）
  * @returns 单点坐标
  */
+/**
+ * 规范化坐标函数（处理数组等情况）
+ */
+function normalize(obj: any): Coordinates {
+  if (Array.isArray(obj.x) && obj.x.length === 2) return { x: obj.x[0], y: obj.x[1] };
+  if (typeof obj.x === 'number' && typeof obj.y === 'number') return { x: obj.x, y: obj.y };
+  throw new Error(`Invalid coordinate format: ${JSON.stringify(obj)}`);
+}
+
 function normalizeTargetPosition(target: any): Coordinates {
   // 如果是边界框格式，计算中心点
   if (target && typeof target.width === 'number' && typeof target.height === 'number') {
@@ -176,6 +185,7 @@ async function moveMouseWithIterationApproach(
   let iteration = 0;
   let currentDeviation = Infinity;
   let lastActualPosition: Coordinates | null = null;
+    let originalBoundingBox: BoundingBox | null = null;  // 保存原始边界框信息
 
   // 使用本地LiteLLM代理进行截图分析
   const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || 'http://bytebot-bytebot-llm-proxy-1:4000';
