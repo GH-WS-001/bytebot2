@@ -1,6 +1,9 @@
 # Base image
 FROM node:20-alpine
 
+# Configure npm to use registry mirror (for better connectivity in China)
+RUN npm config set registry https://registry.npmmirror.com
+
 # Create app directory
 WORKDIR /app
 

@@ -304,7 +304,7 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
           const aiTarget = normalizeTargetPosition(parsed.targetPosition);
           
           // 记录原始边界框信息（如果有）
-          const originalBoundingBox = parsed.targetPosition && parsed.targetPosition.width ? parsed.targetPosition : null;
+          originalBoundingBox = parsed.targetPosition && parsed.targetPosition.width ? parsed.targetPosition : null;
           if (originalBoundingBox) {
             logger.debug(`Iteration ${iteration}: Target bounding box: x=${originalBoundingBox.x}, y=${originalBoundingBox.y}, width=${originalBoundingBox.width}, height=${originalBoundingBox.height}`);
           }
