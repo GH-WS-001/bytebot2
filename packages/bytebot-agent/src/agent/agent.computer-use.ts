@@ -26,6 +26,32 @@ import { Logger } from '@nestjs/common';
 
 const BYTEBOT_DESKTOP_BASE_URL = process.env.BYTEBOT_DESKTOP_BASE_URL as string;
 
+// 计算文本输入的超时时间
+function calculateTextTimeout(text: string, delay?: number): number {
+  const textLength = text.length;
+  
+  // 基础超时时间: 10 秒
+  const baseTimeout = 10000;
+  
+  // 每个字符的额外时间（考虑输入延迟）
+  // 如果有 delay，则每个字符需要 delay 毫秒
+  // 否则假设平均每个字符 50ms
+  const charTime = delay ? delay : 50;
+  
+  // 计算总时间: 基础时间 + 字符数 * 每字符时间
+  const totalTime = baseTimeout + textLength * charTime;
+  
+  // 最小 30 秒，最大 10 分钟
+  const minTimeout = 30000;
+  const maxTimeout = 600000; // 10 分钟
+  
+  const timeout = Math.max(minTimeout, Math.min(maxTimeout, totalTime));
+  
+  console.log(`Calculated timeout for ${textLength} chars: ${timeout}ms (${(timeout/1000).toFixed(1)}s)`);
+  
+  return timeout;
+}
+
 // 通用的 fetch 包装函数，带超时控制
 async function fetchWithTimeout(
   url: string,
