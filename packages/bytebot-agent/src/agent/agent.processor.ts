@@ -416,6 +416,25 @@ export class AgentProcessor {
       if (setTaskStatusToolUseBlock) {
         switch (setTaskStatusToolUseBlock.input.status) {
           case 'completed':
+            // 任务完成时自动截图
+            try {
+              this.logger.debug('Taking final screenshot for completed task');
+              const screenshot = await handleComputerToolUse({
+                type: MessageContentType.ToolUse,
+                id: 'final_screenshot',
+                name: 'computer_screenshot',
+                input: {},
+              } as any, this.logger);
+              
+              // 将截图添加到工具结果中
+              if (screenshot && screenshot.content && screenshot.content.length > 0) {
+                generatedToolResults.push(screenshot);
+                this.logger.debug('Final screenshot added to task results');
+              }
+            } catch (error) {
+              this.logger.warn('Failed to take final screenshot, continuing without it');
+            }
+            
             await this.tasksService.update(taskId, {
               status: TaskStatus.COMPLETED,
               completedAt: new Date(),
