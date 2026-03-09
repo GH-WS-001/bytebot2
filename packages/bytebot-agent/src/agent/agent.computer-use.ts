@@ -455,21 +455,34 @@ async function moveMouseWithIterationApproach(
                   },
                   {
                     type: 'text',
-                      text: `Find the mouse cursor and target element in this screenshot.
+                      text: `Analyze this screenshot carefully.
 
-Target: ${targetDescription}
+Target to find: ${targetDescription}
 
-Instructions:
-1. Mouse cursor: Find the small arrow cursor. Give me the coordinates of the arrow TIP (pointing end).
-2. Target element: Find the target described above. Give me a tight bounding box (x, y, width, height) around ONLY this element.
+Step 1 - Find the mouse cursor:
+- Look for a small arrow-shaped cursor (usually white with black outline)
+- The cursor is VERY SMALL (about 10-20 pixels)
+- Find the TIP of the arrow (the pointing end, usually top-left corner of cursor)
+- Give me the exact pixel coordinates of the arrow tip
 
-Respond with ONLY this JSON format (no other text):
+Step 2 - Find the target element:
+- Search for the element described above
+- Draw a TIGHT bounding box around it
+- The box should be as small as possible while containing the entire element
+- Give me: x, y (top-left corner), width, height
+
+Step 3 - Verify your answer:
+- Is the mouse cursor clearly visible? If not, set confidence to "low"
+- Is the target element clearly identified? If not, set confidence to "low"
+- Are the coordinates reasonable? (not 0,0 or very large numbers)
+
+Respond with ONLY this JSON (no other text):
 {"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high"}
 
-Important:
-- Mouse position: arrow TIP coordinates
-- Target position: tight bounding box around the target element only
-- Both in screenshot pixel coordinates`,
+CRITICAL: 
+- If you cannot clearly see the mouse cursor, set confidence to "low"
+- If you cannot clearly identify the target, set confidence to "low"
+- Be honest about confidence - do not say "high" if you are uncertain`,
                   },
                 ],
               },
