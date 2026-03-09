@@ -1162,25 +1162,50 @@ async function pressKeys(input: { keys: string[]; press?: 'up' | 'down' }): Prom
 
 
 // 智能按键函数 - 自动按下并释放按键（适用于单次按键操作）
+// 注意：此函数直接调用 API，避免与 pressKeys 形成循环调用
 async function smartPressKeys(keys: string[], holdDuration: number = 100): Promise<void> {
   console.log(`Smart pressing keys: ${keys}`);
   
   try {
     // 按下按键
-    await pressKeys({ keys, press: 'down' });
+    await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'press_keys',
+        keys,
+        press: 'down',
+      }),
+    });
     
     // 等待一小段时间
     await new Promise(resolve => setTimeout(resolve, holdDuration));
     
     // 释放按键
-    await pressKeys({ keys, press: 'up' });
+    await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'press_keys',
+        keys,
+        press: 'up',
+      }),
+    });
     
     console.log(`Smart press completed: ${keys}`);
   } catch (error) {
     console.error('Error in smart press keys:', error);
     // 确保按键被释放
     try {
-      await pressKeys({ keys, press: 'up' });
+      await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'press_keys',
+          keys,
+          press: 'up',
+        }),
+      });
     } catch (releaseError) {
       console.error('Error releasing keys:', releaseError);
     }
