@@ -337,7 +337,24 @@ export class AgentProcessor {
 
       let setTaskStatusToolUseBlock: SetTaskStatusToolUseBlock | null = null;
 
-      for (const block of messageContentBlocks) {
+      // 对消息块进行排序：优先处理截图相关的操作
+      const sortedBlocks = [...messageContentBlocks].sort((a, b) => {
+        // 定义优先级：截图 > 其他屏幕操作 > 其他操作
+        const getPriority = (block: any): number => {
+          if (block.type === 'tool_use') {
+            // 截图操作优先级最高
+            if (block.name === 'computer_screenshot') return 1;
+            // 其他屏幕操作次之
+            if (block.name?.startsWith('computer_')) return 2;
+          }
+          // 其他操作优先级最低
+          return 3;
+        };
+
+        return getPriority(a) - getPriority(b);
+      });
+
+      for (const block of sortedBlocks) {
         if (isComputerToolUseContentBlock(block)) {
           const result = await handleComputerToolUse(block, this.logger);
           generatedToolResults.push(result);
@@ -399,6 +416,25 @@ export class AgentProcessor {
       if (setTaskStatusToolUseBlock) {
         switch (setTaskStatusToolUseBlock.input.status) {
           case 'completed':
+            // 任务完成时自动截图
+            try {
+              this.logger.debug('Taking final screenshot for completed task');
+              const screenshot = await handleComputerToolUse({
+                type: MessageContentType.ToolUse,
+                id: 'final_screenshot',
+                name: 'computer_screenshot',
+                input: {},
+              } as any, this.logger);
+              
+              // 将截图添加到工具结果中
+              if (screenshot && screenshot.content && screenshot.content.length > 0) {
+                generatedToolResults.push(screenshot);
+                this.logger.debug('Final screenshot added to task results');
+              }
+            } catch (error) {
+              this.logger.warn('Failed to take final screenshot, continuing without it');
+            }
+            
             await this.tasksService.update(taskId, {
               status: TaskStatus.COMPLETED,
               completedAt: new Date(),

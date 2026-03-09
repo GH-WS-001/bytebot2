@@ -26,6 +26,134 @@ import { Logger } from '@nestjs/common';
 
 const BYTEBOT_DESKTOP_BASE_URL = process.env.BYTEBOT_DESKTOP_BASE_URL as string;
 
+// 按键状态跟踪 - 用于检测和修复卡住的按键
+const pressedKeys = new Set<string>();
+const keyPressTimestamps = new Map<string, number>();
+const MAX_KEY_PRESS_DURATION = 5000; // 5 秒 - 按键按住的最大时长
+
+// 检查并释放长时间按住的按键
+async function checkAndReleaseStuckKeys(): Promise<void> {
+  const now = Date.now();
+  const stuckKeys: string[] = [];
+  
+  for (const [key, timestamp] of keyPressTimestamps.entries()) {
+    if (now - timestamp > MAX_KEY_PRESS_DURATION) {
+      stuckKeys.push(key);
+    }
+  }
+  
+  if (stuckKeys.length > 0) {
+    console.warn(`Detected stuck keys: ${stuckKeys.join(', ')}, releasing...`);
+    
+    try {
+      await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'press_keys',
+          keys: stuckKeys,
+          press: 'up',
+        }),
+      });
+      
+      // 清理状态
+      for (const key of stuckKeys) {
+        pressedKeys.delete(key);
+        keyPressTimestamps.delete(key);
+      }
+      
+      console.log(`Released stuck keys: ${stuckKeys.join(', ')}`);
+    } catch (error) {
+      console.error('Error releasing stuck keys:', error);
+    }
+  }
+}
+
+// 在每次操作前检查卡住的按键
+async function safeOperation<T>(operation: () => Promise<T>): Promise<T> {
+  await checkAndReleaseStuckKeys();
+  return operation();
+}
+
+
+// 计算文本输入的超时时间
+function calculateTextTimeout(text: string, delay?: number): number {
+  const textLength = text.length;
+  
+  // 基础超时时间: 10 秒
+  const baseTimeout = 10000;
+  
+  // 每个字符的额外时间（考虑输入延迟）
+  // 如果有 delay，则每个字符需要 delay 毫秒
+  // 否则假设平均每个字符 50ms
+  const charTime = delay ? delay : 50;
+  
+  // 计算总时间: 基础时间 + 字符数 * 每字符时间
+  const totalTime = baseTimeout + textLength * charTime;
+  
+  // 最小 30 秒，最大 10 分钟
+  const minTimeout = 30000;
+  const maxTimeout = 600000; // 10 分钟
+  
+  const timeout = Math.max(minTimeout, Math.min(maxTimeout, totalTime));
+  
+  console.log(`Calculated timeout for ${textLength} chars: ${timeout}ms (${(timeout/1000).toFixed(1)}s)`);
+  
+  return timeout;
+}
+
+// 通用的 fetch 包装函数，带超时控制和重试机制
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = 60000,
+  maxRetries: number = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeout);
+      
+      // 如果响应成功，直接返回
+      if (response.ok) {
+        return response;
+      }
+      
+      // 如果是服务器错误（5xx），重试
+      if (response.status >= 500 && attempt < maxRetries) {
+        console.log(`Attempt ${attempt}/${maxRetries} failed with status ${response.status}, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // 指数退避
+        continue;
+      }
+      
+      return response;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error as Error;
+      
+      // 如果是超时错误或网络错误，重试
+      if (attempt < maxRetries) {
+        console.log(`Attempt ${attempt}/${maxRetries} failed: ${lastError.message}, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // 指数退避
+        continue;
+      }
+    }
+  }
+  
+  // 所有重试都失败了
+  throw lastError || new Error('All retry attempts failed');
+}
+
+
 /**
  * 安全解析LLM响应的JSON
  * 处理各种格式错误：单引号、缺失引号、尾随逗号等
@@ -193,26 +321,21 @@ async function moveMouseWithIterationApproach(
   maxIterations: number = 3,
   deviationThreshold: number = 20,
 ): Promise<{ success: boolean; iterations: number; finalDeviation: number; finalPosition: Coordinates }> {
-    // 如果 coordinates 是字符串，先解析为对象
-    if (typeof targetCoordinates === 'string') {
-      try {
-        targetCoordinates = JSON.parse(targetCoordinates);
-        logger.debug('Parsed string coordinates:', targetCoordinates);
-      
-      // 如果解析后是数组格式 [x, y]，转换为对象格式
+  // 如果 coordinates 是字符串，先解析为对象
+  if (typeof targetCoordinates === 'string') {
+    try {
+      targetCoordinates = JSON.parse(targetCoordinates);
+      logger.debug('Parsed string coordinates:', targetCoordinates);
       if (Array.isArray(targetCoordinates) && targetCoordinates.length >= 2) {
-        targetCoordinates = {
-          x: targetCoordinates[0],
-          y: targetCoordinates[1]
-        };
+        targetCoordinates = { x: targetCoordinates[0], y: targetCoordinates[1] };
         logger.debug('Converted array coordinates to object:', targetCoordinates);
       }
-      } catch (e) {
-        logger.error('Failed to parse coordinates string:', targetCoordinates);
-      }
+    } catch (e) {
+      logger.error('Failed to parse coordinates string:', targetCoordinates);
     }
+  }
 
-  // 修复LLM返回的坐标格式错误: {"x": 704, 563} -> {"x": 704, "y": 563}
+  // 修复常见格式错误: {"x": 704, 563} -> {"x": 704, "y": 563}
   if (targetCoordinates && typeof targetCoordinates.x === 'number' && typeof targetCoordinates.y === 'undefined') {
     const str = JSON.stringify(targetCoordinates);
     const match = str.match(/"x":(\d+),(\d+)/);
@@ -233,39 +356,32 @@ async function moveMouseWithIterationApproach(
     };
   }
 
-  // 规范化坐标函数（处理数组等情况）
-  const normalize = (obj: any): Coordinates => {
-    if (Array.isArray(obj.x) && obj.x.length === 2) return { x: obj.x[0], y: obj.x[1] };
-    if (typeof obj.x === 'number' && typeof obj.y === 'number') return { x: obj.x, y: obj.y };
-    throw new Error(`Invalid coordinate format: ${JSON.stringify(obj)}`);
-  };
-
   logger.debug(`Starting iterative mouse movement to (${targetCoordinates.x}, ${targetCoordinates.y})`);
   logger.debug(`Target description: ${targetDescription}`);
 
-  // 保存原始目标位置，始终使用它作为参考
-  const originalTarget = { ...targetCoordinates };
-  
+  const initialTarget = { ...targetCoordinates };
+
   let iteration = 0;
   let currentDeviation = Infinity;
-  let lastActualPosition: Coordinates | null = null;
-    let originalBoundingBox: BoundingBox | null = null;  // 保存原始边界框信息
+  let lastActualPosition: Coordinates | null = null;      // 物理鼠标位置
+  let lastAiMouse: Coordinates | null = null;             // AI识别的鼠标位置（用于判断）
+  let boundingBox: BoundingBox | null = null;
+  let targetCenter: Coordinates | null = null;
+  let success = false;
 
-  // 使用本地LiteLLM代理进行截图分析
   const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || 'http://bytebot-bytebot-llm-proxy-1:4000';
   const LITELLM_MODEL = process.env.LITELLM_MODEL || 'qwen3.5:35b';
 
   logger.debug(`Using LiteLLM at ${LITELLM_BASE_URL} with model ${LITELLM_MODEL} for screenshot analysis`);
 
-  let adaptiveThreshold = deviationThreshold;  // 默认使用基础阈值
-  while (iteration < maxIterations && currentDeviation > deviationThreshold) {
+  while (iteration < maxIterations && !success) {
     iteration++;
-    logger.debug(`Iteration ${iteration}: Starting iteration`);
+    logger.debug(`Iteration ${iteration}: Starting`);
 
     try {
-      // 1. 执行移动
-      logger.debug(`Iteration ${iteration}: Moving mouse to target`);
-      const moveResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      // 1. 移动鼠标到当前目标坐标
+      logger.debug(`Iteration ${iteration}: Moving mouse to (${targetCoordinates.x}, ${targetCoordinates.y})`);
+      await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -274,9 +390,18 @@ async function moveMouseWithIterationApproach(
         }),
       });
 
-      // 2. 截图验证
-      logger.debug(`Iteration ${iteration}: Taking screenshot for verification`);
-      const screenshotResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      // 2. 获取物理鼠标位置（API 报告）
+      const posRes = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cursor_position' }),
+      });
+      const apiPos: Coordinates = await posRes.json();
+      lastActualPosition = apiPos;
+      logger.debug(`Iteration ${iteration}: API mouse at (${apiPos.x}, ${apiPos.y})`);
+
+      // 3. 截图并用 AI 分析目标
+      const screenshotRes = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -284,240 +409,184 @@ async function moveMouseWithIterationApproach(
           includeCursor: true,
         }),
       });
+      const screenshotData = await screenshotRes.json();
+      const screenshotBase64 = screenshotData.image;
 
-      const screenshotResult = await screenshotResponse.json();
-      const screenshotBase64 = screenshotResult.image;
-
-      // 3. 获取API报告的鼠标位置
-      const positionResponse = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      const llmRes = await fetch(`${LITELLM_BASE_URL}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'cursor_position',
+          model: LITELLM_MODEL,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+                {
+                  type: 'text',
+                  text: `Analyze this screenshot carefully.
+
+Target to find: ${targetDescription}
+
+Step 1 - Find the mouse cursor:
+- Look for a small arrow-shaped cursor (usually white with black outline)
+- The cursor is VERY SMALL (about 10-20 pixels)
+- Find the TIP of the arrow (the pointing end, usually top-left corner of cursor)
+- Give me the exact pixel coordinates of the arrow tip
+
+Step 2 - Find the target element:
+- Search for the element described above
+- Draw a TIGHT bounding box around it
+- The box should be as small as possible while containing the entire element
+- Give me: x, y (top-left corner), width, height
+
+Step 3 - Verify your answer:
+- Is the mouse cursor clearly visible? If not, set confidence to "low"
+- Is the target element clearly identified? If not, set confidence to "low"
+- Are the coordinates reasonable? (not 0,0 or very large numbers)
+
+Respond with ONLY this JSON (no other text):
+{"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high"}
+
+CRITICAL: 
+- If you cannot clearly see the mouse cursor, set confidence to "low"
+- If you cannot clearly identify the target, set confidence to "low"
+- Be honest about confidence - do not say "high" if you are uncertain`,
+                },
+              ],
+            },
+          ],
+          max_tokens: 2000,
+          temperature: 0.1,
         }),
       });
-      const apiPosition = await positionResponse.json();
 
-      logger.debug(`Iteration ${iteration}: API reports mouse at (${apiPosition.x}, ${apiPosition.y})`);
+      if (!llmRes.ok) {
+        throw new Error(`LiteLLM request failed: ${llmRes.status} ${await llmRes.text()}`);
+      }
 
-      // 4. 使用LiteLLM分析截图，识别鼠标位置和目标位置
-      let detectedPosition: Coordinates;
-      let detectedTarget: Coordinates;
+      const llmResult = await llmRes.json();
+      const responseText = llmResult.choices[0].message.content;
+      logger.debug(`Iteration ${iteration}: LiteLLM response: ${responseText}`);
 
-      try {
-        logger.debug(`Iteration ${iteration}: Analyzing screenshot with LiteLLM (${LITELLM_MODEL})`);
-
-        // 调用LiteLLM的OpenAI兼容API
-        const llmResponse = await fetch(`${LITELLM_BASE_URL}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: LITELLM_MODEL,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:image/png;base64,${screenshotBase64}`,
-                    },
-                  },
-                  {
-                    type: 'text',
-                    text: `Analyze this screenshot and identify two positions:
-
-1. Mouse Cursor Position: Find the mouse cursor icon (small arrow/pointer). Give me its exact pixel coordinates (center of the cursor).
-
-2. Target Element Position: ${targetDescription} Provide the bounding box of the target element (x, y coordinates of top-left corner, width, and height).
-
-IMPORTANT: You must respond with ONLY a single JSON object, no other text, no markdown, no newlines. The JSON must exactly follow this format:
-{"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high"}`,
-                  },
-                ],
-              },
-            ],
-            max_tokens: 2000,
-            temperature: 0.1,
-          }),
-        });
-
-        if (!llmResponse.ok) {
-          const errorText = await llmResponse.text();
-          throw new Error(`LiteLLM request failed: ${llmResponse.status} ${errorText}`);
-        }
-
-        const llmResult = await llmResponse.json();
-        const responseText = llmResult.choices[0].message.content;
-
-        logger.debug(`Iteration ${iteration}: LiteLLM response: ${responseText}`);
-
-        // 使用安全的JSON解析函数
-        const parsed = safeParseLLMResponse(responseText);
-        
-        if (!parsed || !parsed.mousePosition || !parsed.targetPosition) {
-          logger.error(`Iteration ${iteration}: Failed to parse AI response`);
-          // 降级：尝试直接使用 API 位置并执行一次小幅度试探
-          const tentativeDx = targetCoordinates.x - apiPosition.x;
-          const tentativeDy = targetCoordinates.y - apiPosition.y;
-          if (Math.abs(tentativeDx) + Math.abs(tentativeDy) > 20) {
-            // 移动一小步
-            targetCoordinates = {
-              x: apiPosition.x + Math.sign(tentativeDx) * 20,
-              y: apiPosition.y + Math.sign(tentativeDy) * 20,
-            };
-            logger.debug(`Iteration ${iteration}: Tentative move to (${targetCoordinates.x}, ${targetCoordinates.y})`);
-          }
-          lastActualPosition = apiPosition;
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          continue;
-        }
-
-        const aiMouse = normalize(parsed.mousePosition);
-          const aiTarget = normalizeTargetPosition(parsed.targetPosition);
-          
-          // 记录原始边界框信息（如果有）
-          originalBoundingBox = parsed.targetPosition && parsed.targetPosition.width ? parsed.targetPosition : null;
-          if (originalBoundingBox) {
-            logger.debug(`Iteration ${iteration}: Target bounding box: x=${originalBoundingBox.x}, y=${originalBoundingBox.y}, width=${originalBoundingBox.width}, height=${originalBoundingBox.height}`);
-          }
-          
-        const confidence = parsed.confidence || 'medium';
-
-        logger.debug(
-          `Iteration ${iteration}: AI detected mouse at (${aiMouse.x}, ${aiMouse.y}), target at (${aiTarget.x}, ${aiTarget.y}), confidence: ${confidence}`,
-        );
-
-        // 如果置信度过低，谨慎处理
-        if (confidence === 'low') {
-          logger.debug(`Iteration ${iteration}: Low confidence, reducing step size`);
-          // 只移动偏差的一半
-          const halfDx = (aiTarget.x - aiMouse.x) / 2;
-          const halfDy = (aiTarget.y - aiMouse.y) / 2;
-          targetCoordinates = {
-            x: Math.round(apiPosition.x + halfDx),
-            y: Math.round(apiPosition.y + halfDy),
-          };
-        } else {
-          // 正常计算偏移
-          const dx = aiTarget.x - aiMouse.x;
-          const dy = aiTarget.y - aiMouse.y;
-          targetCoordinates = {
-            x: Math.round(apiPosition.x + dx),
-            y: Math.round(apiPosition.y + dy),
-          };
-        }
-
-        detectedPosition = aiMouse;
-        detectedTarget = aiTarget;
-
-        logger.debug(
-          `Iteration ${iteration}: AI detected mouse at (${detectedPosition.x}, ${detectedPosition.y}), target at (${detectedTarget.x}, ${detectedTarget.y}), confidence: ${confidence}`,
-        );
-      } catch (aiError) {
-        logger.error(`Iteration ${iteration}: AI analysis failed: ${aiError.message}`);
-        logger.debug(`Iteration ${iteration}: Falling back to tentative move`);
-        // 降级：尝试直接使用 API 位置并执行一次小幅度试探
-        const tentativeDx = targetCoordinates.x - apiPosition.x;
-        const tentativeDy = targetCoordinates.y - apiPosition.y;
-        if (Math.abs(tentativeDx) + Math.abs(tentativeDy) > 20) {
-          // 移动一小步
-          targetCoordinates = {
-            x: apiPosition.x + Math.sign(tentativeDx) * 20,
-            y: apiPosition.y + Math.sign(tentativeDy) * 20,
-          };
-          logger.debug(`Iteration ${iteration}: Tentative move to (${targetCoordinates.x}, ${targetCoordinates.y})`);
-        }
-        lastActualPosition = apiPosition;
-        await new Promise((resolve) => setTimeout(resolve, 200));
+      const parsed = safeParseLLMResponse(responseText);
+      if (!parsed) {
+        logger.error(`Iteration ${iteration}: Failed to parse AI response`);
+        targetCoordinates = getTentativeTarget(apiPos, initialTarget);
         continue;
       }
 
-      logger.debug(`Iteration ${iteration}: Using detected mouse at (${detectedPosition.x}, ${detectedPosition.y})`);
+      // 解析 AI 鼠标位置
+      const aiMouse = parsed.mousePosition ? normalize(parsed.mousePosition) : null;
+      boundingBox = parsed.targetPosition?.width ? parsed.targetPosition as BoundingBox : null;
+      const confidence = parsed.confidence || 'medium';
 
-      // 5. 计算偏差（基于边界框的智能偏差计算）
-      // 计算到中心点的偏移（用于移动计算）
-      const dx = detectedTarget.x - detectedPosition.x;
-      const dy = detectedTarget.y - detectedPosition.y;
-      
-      // 如果有边界框信息，计算鼠标到边界框的距离
-      if (originalBoundingBox) {
-        const bbox = originalBoundingBox;
-        const mouse = detectedPosition;
-        
-        // 计算鼠标到边界框的距离
-        // 如果鼠标在边界框内，距离为 0
-        // 如果在边界框外，计算到最近边界的距离
-        let distanceX = 0;
-        let distanceY = 0;
-        
-        // X 方向距离
-        if (mouse.x < bbox.x) {
-          distanceX = bbox.x - mouse.x;  // 在左边
-        } else if (mouse.x > bbox.x + bbox.width) {
-          distanceX = mouse.x - (bbox.x + bbox.width);  // 在右边
-        }
-        // 否则在边界框内，distanceX = 0
-        
-        // Y 方向距离
-        if (mouse.y < bbox.y) {
-          distanceY = bbox.y - mouse.y;  // 在上边
-        } else if (mouse.y > bbox.y + bbox.height) {
-          distanceY = mouse.y - (bbox.y + bbox.height);  // 在下边
-        }
-        // 否则在边界框内，distanceY = 0
-        
-        // 计算综合偏差
-        currentDeviation = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
-        
-        logger.debug(`Iteration ${iteration}: Bounding box deviation = ${currentDeviation.toFixed(2)}px (distanceX=${distanceX}, distanceY=${distanceY}), mouse at (${mouse.x}, ${mouse.y}), bbox: [${bbox.x}, ${bbox.y}, ${bbox.width}x${bbox.height}]`);
+      if (!aiMouse) {
+        logger.warn(`Iteration ${iteration}: AI did not provide mouse position, using API position for fallback`);
+        // 降级：使用物理鼠标位置作为 AI 鼠标（实际上不可靠，但至少能继续）
+        lastAiMouse = apiPos;
       } else {
-        // 没有边界框信息，使用传统的中心点距离
+        lastAiMouse = aiMouse;
+      }
+
+      if (boundingBox && lastAiMouse) {
+        // 有边界框：计算中心点作为移动目标
+        targetCenter = {
+          x: boundingBox.x + boundingBox.width / 2,
+          y: boundingBox.y + boundingBox.height / 2,
+        };
+
+        // 定义有效区域：向内缩进 5 像素（可调整）
+        const INNER_MARGIN = 5;
+        const effectiveX = boundingBox.x + INNER_MARGIN;
+        const effectiveY = boundingBox.y + INNER_MARGIN;
+        const effectiveWidth = boundingBox.width - 2 * INNER_MARGIN;
+        const effectiveHeight = boundingBox.height - 2 * INNER_MARGIN;
+
+        // 检查 AI 识别的鼠标是否在有效区域内
+        let insideEffective = false;
+        if (effectiveWidth > 0 && effectiveHeight > 0) {
+          insideEffective = lastAiMouse.x >= effectiveX && lastAiMouse.x <= effectiveX + effectiveWidth &&
+                            lastAiMouse.y >= effectiveY && lastAiMouse.y <= effectiveY + effectiveHeight;
+        } else {
+          // 如果内缩后区域无效，回退到原始边界框
+          insideEffective = lastAiMouse.x >= boundingBox.x && lastAiMouse.x <= boundingBox.x + boundingBox.width &&
+                            lastAiMouse.y >= boundingBox.y && lastAiMouse.y <= boundingBox.y + boundingBox.height;
+        }
+
+        if (insideEffective) {
+          logger.debug(`Iteration ${iteration}: AI mouse is inside effective inner area, stopping`);
+          success = true;
+          break;
+        }
+
+        // 计算偏移量：目标中心 - AI鼠标位置
+        const dx = targetCenter.x - lastAiMouse.x;
+        const dy = targetCenter.y - lastAiMouse.y;
         currentDeviation = Math.sqrt(dx * dx + dy * dy);
-        
-        logger.debug(`Iteration ${iteration}: Center point deviation = ${currentDeviation.toFixed(2)}px (dx=${dx}, dy=${dy})`);
+
+        // 向中心点移动，步长根据置信度调整
+        const stepFactor = confidence === 'low' ? 0.5 : 1.0;
+        targetCoordinates = {
+          x: Math.round(apiPos.x + dx * stepFactor),
+          y: Math.round(apiPos.y + dy * stepFactor),
+        };
+
+        logger.debug(`Iteration ${iteration}: Moving towards center (${targetCenter.x}, ${targetCenter.y}), AI deviation=${currentDeviation.toFixed(2)}`);
+      } else if (parsed.targetPosition && lastAiMouse) {
+        // 无边界框但有目标点坐标
+        const targetPoint = normalize(parsed.targetPosition);
+        const dx = targetPoint.x - lastAiMouse.x;
+        const dy = targetPoint.y - lastAiMouse.y;
+        currentDeviation = Math.sqrt(dx * dx + dy * dy);
+
+        if (currentDeviation <= deviationThreshold) {
+          logger.debug(`Iteration ${iteration}: Deviation within threshold, stopping`);
+          success = true;
+          break;
+        }
+
+        const stepFactor = confidence === 'low' ? 0.5 : 1.0;
+        targetCoordinates = {
+          x: Math.round(apiPos.x + dx * stepFactor),
+          y: Math.round(apiPos.y + dy * stepFactor),
+        };
+
+        logger.debug(`Iteration ${iteration}: Target point (${targetPoint.x}, ${targetPoint.y}), AI deviation=${currentDeviation.toFixed(2)}`);
+      } else {
+        logger.debug(`Iteration ${iteration}: No target information from AI, using tentative move`);
+        targetCoordinates = getTentativeTarget(apiPos, initialTarget);
       }
-      
-      // 计算自适应阈值和边界框检查
-      adaptiveThreshold = calculateAdaptiveThreshold(originalBoundingBox, deviationThreshold);
-      
-      const isLargeTarget = originalBoundingBox && originalBoundingBox.width > 100 && originalBoundingBox.height > 50;
-      const isNearBoundingBox = isLargeTarget && isMouseNearBoundingBox(detectedPosition, originalBoundingBox, 5);
-      
-      // 步骤4: 用API位置加上偏差量得到最终要设置的鼠标位置
-      const newTargetX = apiPosition.x + dx;
-      const newTargetY = apiPosition.y + dy;
 
-      targetCoordinates = {
-        x: Math.round(newTargetX),
-        y: Math.round(newTargetY),
-      };
-
-      logger.debug(`Iteration ${iteration}: New target position: API(${apiPosition.x}, ${apiPosition.y}) + offset(${dx}, ${dy}) = (${targetCoordinates.x}, ${targetCoordinates.y})`);
-
-      lastActualPosition = apiPosition;
-
-      // 检查是否满足停止条件
-      if (currentDeviation <= adaptiveThreshold) {
-        logger.debug(`Iteration ${iteration}: Deviation within adaptive threshold, stopping`);
-        break;
-      }
-      
-      if (isNearBoundingBox) {
-        logger.debug(`Iteration ${iteration}: Mouse is within target bounding box, stopping`);
-        break;
-      }
-      
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       logger.error(`Iteration ${iteration} failed: ${error.message}`);
-      break;
+      targetCoordinates = getTentativeTarget(lastActualPosition || targetCoordinates, initialTarget);
     }
   }
 
-    const success = currentDeviation <= adaptiveThreshold;
+  // 最终成功判断（如果循环因 success=true 退出，已经正确；否则根据条件再次确认）
+  if (!success) {
+    if (boundingBox && lastAiMouse) {
+      const INNER_MARGIN = 5;
+      const effectiveX = boundingBox.x + INNER_MARGIN;
+      const effectiveY = boundingBox.y + INNER_MARGIN;
+      const effectiveWidth = boundingBox.width - 2 * INNER_MARGIN;
+      const effectiveHeight = boundingBox.height - 2 * INNER_MARGIN;
+      let finalInside = false;
+      if (effectiveWidth > 0 && effectiveHeight > 0) {
+        finalInside = lastAiMouse.x >= effectiveX && lastAiMouse.x <= effectiveX + effectiveWidth &&
+                      lastAiMouse.y >= effectiveY && lastAiMouse.y <= effectiveY + effectiveHeight;
+      } else {
+        finalInside = lastAiMouse.x >= boundingBox.x && lastAiMouse.x <= boundingBox.x + boundingBox.width &&
+                      lastAiMouse.y >= boundingBox.y && lastAiMouse.y <= boundingBox.y + boundingBox.height;
+      }
+      success = finalInside;
+    } else {
+      success = currentDeviation <= deviationThreshold;
+    }
+  }
+
   logger.debug(
     `Iterative movement completed: ${success ? 'SUCCESS' : 'FAILED'}, ` +
       `iterations=${iteration}, final deviation=${currentDeviation.toFixed(2)}px`,
@@ -528,6 +597,23 @@ IMPORTANT: You must respond with ONLY a single JSON object, no other text, no ma
     iterations: iteration,
     finalDeviation: currentDeviation,
     finalPosition: lastActualPosition || targetCoordinates,
+  };
+}
+
+/**
+ * 辅助函数：试探性移动一小步
+ */
+function getTentativeTarget(current: Coordinates, initial: Coordinates, step: number = 20): Coordinates {
+  const dx = initial.x - current.x;
+  const dy = initial.y - current.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (distance < step) {
+    return initial;
+  }
+  const ratio = step / distance;
+  return {
+    x: Math.round(current.x + dx * ratio),
+    y: Math.round(current.y + dy * ratio),
   };
 }
 
@@ -665,7 +751,7 @@ export async function handleComputerToolUse(
           button: block.input.button || 'left',
           clickCount: block.input.clickCount || 1,
           holdKeys: block.input.holdKeys,
-        });
+        }, logger);
       }
     if (isPressMouseToolUseBlock(block)) {
         // 按压前先移动到目标位置
@@ -879,7 +965,7 @@ async function clickMouse(input: {
   button: Button;
   clickCount: number;
   holdKeys?: string[];
-}): Promise<void> {
+}, logger?: Logger): Promise<void> {
   const { coordinates, button, clickCount, holdKeys } = input;
   console.log(
     `Clicking mouse: ${button} ${clickCount} times ${coordinates ? `at [${coordinates.x}, ${coordinates.y}]` : 'at current position'} ${holdKeys ? `with holdKeys: ${holdKeys}` : ''}`,
@@ -999,6 +1085,21 @@ async function typeKeys(input: { keys: string[]; delay?: number }): Promise<void
 async function pressKeys(input: { keys: string[]; press?: 'up' | 'down' }): Promise<void> {
   const press = input.press || 'down';
   const { keys } = input;
+  
+    // 定义修饰键（这些键需要按住）
+    const modifierKeys = ['Shift', 'Control', 'Alt', 'Meta', 'Command', 'Ctrl', 'Cmd'];
+    
+    // 检查是否都是修饰键
+    const allModifiers = keys.every(key => 
+      modifierKeys.some(mod => key.toLowerCase().includes(mod.toLowerCase()))
+    );
+    
+    // 如果不是修饰键，且 press='down'，自动按下并释放
+    if (!allModifiers && press === 'down') {
+      console.log(`Auto-releasing non-modifier keys: ${keys}`);
+      await smartPressKeys(keys, 100);
+      return;
+    }
   console.log(`Pressing keys: ${keys} (${press})`);
 
   try {
@@ -1013,6 +1114,59 @@ async function pressKeys(input: { keys: string[]; press?: 'up' | 'down' }): Prom
     });
   } catch (error) {
     console.error('Error in press_keys action:', error);
+    throw error;
+  }
+}
+
+
+// 智能按键函数 - 自动按下并释放按键（适用于单次按键操作）
+// 注意：此函数直接调用 API，避免与 pressKeys 形成循环调用
+async function smartPressKeys(keys: string[], holdDuration: number = 100): Promise<void> {
+  console.log(`Smart pressing keys: ${keys}`);
+  
+  try {
+    // 按下按键
+    await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'press_keys',
+        keys,
+        press: 'down',
+      }),
+    });
+    
+    // 等待一小段时间
+    await new Promise(resolve => setTimeout(resolve, holdDuration));
+    
+    // 释放按键
+    await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'press_keys',
+        keys,
+        press: 'up',
+      }),
+    });
+    
+    console.log(`Smart press completed: ${keys}`);
+  } catch (error) {
+    console.error('Error in smart press keys:', error);
+    // 确保按键被释放
+    try {
+      await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'press_keys',
+          keys,
+          press: 'up',
+        }),
+      });
+    } catch (releaseError) {
+      console.error('Error releasing keys:', releaseError);
+    }
     throw error;
   }
 }
