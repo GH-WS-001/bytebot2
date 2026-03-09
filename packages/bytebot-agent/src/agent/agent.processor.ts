@@ -337,7 +337,24 @@ export class AgentProcessor {
 
       let setTaskStatusToolUseBlock: SetTaskStatusToolUseBlock | null = null;
 
-      for (const block of messageContentBlocks) {
+      // 对消息块进行排序：优先处理截图相关的操作
+      const sortedBlocks = [...messageContentBlocks].sort((a, b) => {
+        // 定义优先级：截图 > 其他屏幕操作 > 其他操作
+        const getPriority = (block: any): number => {
+          if (block.type === 'tool_use') {
+            // 截图操作优先级最高
+            if (block.name === 'computer_screenshot') return 1;
+            // 其他屏幕操作次之
+            if (block.name?.startsWith('computer_')) return 2;
+          }
+          // 其他操作优先级最低
+          return 3;
+        };
+
+        return getPriority(a) - getPriority(b);
+      });
+
+      for (const block of sortedBlocks) {
         if (isComputerToolUseContentBlock(block)) {
           const result = await handleComputerToolUse(block, this.logger);
           generatedToolResults.push(result);
