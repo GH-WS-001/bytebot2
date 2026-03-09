@@ -34,7 +34,7 @@ const buttonSchema = {
  */
 export const _moveMouseTool = {
   name: 'computer_move_mouse',
-  description: 'Moves the mouse cursor to the specified coordinates',
+  description: 'Moves the mouse cursor to the specified coordinates WITHOUT clicking. Use this ONLY when you need to reposition the mouse without performing any action. For clicking on elements (buttons, input fields, etc.), use computer_click_mouse instead.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -71,7 +71,7 @@ export const _traceMouseTool = {
 export const _clickMouseTool = {
   name: 'computer_click_mouse',
   description:
-    'Performs a mouse click at the specified coordinates or current position',
+    'Performs a mouse click at the specified coordinates or current position. Use this to interact with UI elements like buttons, input fields, links, etc. This will automatically move the mouse to the target before clicking.',
   input_schema: {
     type: 'object' as const,
     properties: {
