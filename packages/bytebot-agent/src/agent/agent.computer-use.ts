@@ -378,8 +378,10 @@ async function moveMouseWithIterationApproach(
   let currentDeviation = Infinity;
   let lastActualPosition: Coordinates | null = null;
     let originalBoundingBox: BoundingBox | null = null;  // 保存原始边界框信息
+  let distanceX = 0;  // 初始化 X 方向距离
+  let distanceY = 0;  // 初始化 Y 方向距离
 
-  // 使用本地LiteLLM代理进行截图分析
+  // 使用本地 LiteLLM 代理进行截图分析
   const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || 'http://bytebot-bytebot-llm-proxy-1:4000';
   const LITELLM_MODEL = process.env.LITELLM_MODEL || 'qwen3.5:35b';
 
@@ -645,27 +647,25 @@ CRITICAL:
 
       lastActualPosition = apiPosition;
 
-        // 检查是否满足停止条件
-        // 如果有边界框，只有鼠标在边界框内才停止
-        // 如果没有边界框，使用偏差阈值判断
-        if (originalBoundingBox) {
-          // 有边界框：只有鼠标在边界框内才停止
-          if (distanceX === 0 && distanceY === 0) {
-            logger.debug(`Iteration ${iteration}: Mouse is within bounding box, stopping`);
-            break;
-          }
-        } else {
-          // 没有边界框：使用偏差阈值判断
-          if (currentDeviation <= adaptiveThreshold) {
-            logger.debug(`Iteration ${iteration}: Deviation within adaptive threshold, stopping`);
-            break;
-          }
+      // 检查是否满足停止条件
+      // 如果有边界框，只有鼠标在边界框内才停止
+      // 如果没有边界框，使用偏差阈值判断
+      if (originalBoundingBox) {
+        // 有边界框：只有鼠标在边界框内才停止
+        if (distanceX === 0 && distanceY === 0) {
+          logger.debug(`Iteration ${iteration}: Mouse is within bounding box, stopping`);
+          break;
+        }
+      } else {
+        // 没有边界框：使用偏差阈值判断
+        if (currentDeviation <= adaptiveThreshold) {
+          logger.debug(`Iteration ${iteration}: Deviation within adaptive threshold, stopping`);
+          break;
         }
       }
       
       if (isNearBoundingBox) {
         logger.debug(`Iteration ${iteration}: Mouse is within target bounding box, stopping`);
-        break;
       }
       
       await new Promise((resolve) => setTimeout(resolve, 100));
