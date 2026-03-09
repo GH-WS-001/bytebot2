@@ -16,6 +16,10 @@
     ".": {
       "import": "./dist/index.esm.js",
       "require": "./dist/index.js"
+    },
+    "./dist/utils/coordinateCorrection.utils": {
+      "import": "./dist/utils/coordinateCorrection.utils.js",
+      "require": "./dist/utils/coordinateCorrection.utils.js"
     }
   },
   "devDependencies": {

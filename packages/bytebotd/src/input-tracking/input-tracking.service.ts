@@ -108,7 +108,7 @@ export class InputTrackingService implements OnModuleDestroy {
           clearTimeout(this.screenshotTimeout);
         }
         this.screenshotTimeout = setTimeout(async () => {
-          this.screenshot = await this.computerUseService.screenshot();
+          this.screenshot = await this.computerUseService.screenshot({ includeCursor: true });
         }, this.SCREENSHOT_DEBOUNCE_MS);
       }
     });

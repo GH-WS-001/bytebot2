@@ -7,6 +7,7 @@ import {
   IsArray,
   Min,
   IsIn,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -185,6 +186,10 @@ export class WaitActionDto extends BaseActionDto {
 export class ScreenshotActionDto extends BaseActionDto {
   @IsIn(['screenshot'])
   action: 'screenshot';
+
+  @IsBoolean()
+  @IsOptional()
+  includeCursor?: boolean;
 }
 
 export class CursorPositionActionDto extends BaseActionDto {

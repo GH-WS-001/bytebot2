@@ -270,7 +270,7 @@ export class ComputerUseService {
         break;
       }
       case 'screenshot':
-        return this.screenshot();
+        return this.screenshot(params);
 
       case 'cursor_position':
         return this.cursor_position();

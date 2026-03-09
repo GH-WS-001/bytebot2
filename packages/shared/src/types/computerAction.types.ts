@@ -95,6 +95,7 @@ export type WaitAction = {
 
 export type ScreenshotAction = {
   action: "screenshot";
+  includeCursor?: boolean;
 };
 
 export type CursorPositionAction = {
