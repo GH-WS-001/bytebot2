@@ -3,7 +3,7 @@ model_list:
     - model_name: qwen3.5:35b
       litellm_params:
         model: anthropic/qwen3.5:35b
-        api_base: http://169.254.79.23:11434/v1
+        api_base: http://169.254.79.23:11434
         drop_params: true  # Drop Anthropic-specific params for Ollama
     # Anthropic Models
     - model_name: claude-opus-4

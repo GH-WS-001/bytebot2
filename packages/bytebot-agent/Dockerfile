@@ -1,5 +1,5 @@
-# Base image
-FROM node:20-alpine
+# Base image - using DaoCloud mirror for better connectivity in China
+FROM docker.m.daocloud.io/library/node:20-alpine
 
 # Configure npm to use registry mirror (for better connectivity in China)
 RUN npm config set registry https://registry.npmmirror.com
@@ -17,9 +17,12 @@ WORKDIR /app
 COPY ./shared ./shared
 COPY ./bytebot-agent/ ./bytebot-agent/
 
-WORKDIR /app/bytebot-agent
+# Install shared package dependencies
+WORKDIR /app/shared
+RUN npm install
 
-# Install dependencies
+# Install bytebot-agent dependencies
+WORKDIR /app/bytebot-agent
 RUN npm install
 
 RUN npm run build

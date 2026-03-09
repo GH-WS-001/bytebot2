@@ -549,11 +549,21 @@ V, W, X, Y, Z
   @Tool({
     name: 'computer_screenshot',
     description: 'Captures a screenshot of the current screen.',
+    parameters: {
+      type: 'object',
+      properties: {
+        includeCursor: {
+          type: 'boolean',
+          description: 'Whether to include the mouse cursor in the screenshot',
+        },
+      },
+    },
   })
-  async screenshot() {
+  async screenshot(params?: { includeCursor?: boolean }) {
     try {
       const shot = (await this.computerUse.action({
         action: 'screenshot',
+        includeCursor: params?.includeCursor,
       })) as { image: string };
       return {
         content: [

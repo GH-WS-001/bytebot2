@@ -2,8 +2,8 @@
 # Bytebot Dockerfile - Virtual Desktop Environment
 # -----------------------------------------------------------------------------
 
-# Base image
-FROM ubuntu:22.04
+# Base image - using DaoCloud mirror for better connectivity in China
+FROM docker.m.daocloud.io/library/ubuntu:22.04
 
 # -----------------------------------------------------------------------------
 # 1. Environment setup
