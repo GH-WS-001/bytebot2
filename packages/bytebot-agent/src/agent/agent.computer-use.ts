@@ -455,35 +455,21 @@ async function moveMouseWithIterationApproach(
                   },
                   {
                     type: 'text',
-                    text: `Analyze this screenshot and identify two positions:
+                      text: `Find the mouse cursor and target element in this screenshot.
 
-1. Mouse Cursor Position: Find the mouse cursor icon (small arrow/pointer). 
-   - Look for the small arrow-shaped cursor on the screen
-   - Identify the TIP of the arrow (the pointing end), not the center
-   - Give me the exact pixel coordinates of the arrow tip
-   - Be precise: the tip is usually at the top-left corner of the cursor icon
+Target: ${targetDescription}
 
-2. Target Element Position: ${targetDescription}
-   - Find the EXACT target element on the screen
-   - Draw a TIGHT bounding box around ONLY the target element
-   - The bounding box should be as small as possible while still containing the entire element
-   - DO NOT include extra space around the element
-   - For input fields: the box should be just the input box itself (usually 100-300px wide, 20-40px tall)
-   - For buttons: the box should be just the button itself
-   - For text: the box should be just the text area
-   
-   CRITICAL: The bounding box must be TIGHT and PRECISE:
-   - For a small input field: width should be ~100-300px, height ~20-40px
-   - For a button: width should be ~50-200px, height ~20-50px
-   - If your bounding box is larger than 400px in any dimension, you are including too much!
+Instructions:
+1. Mouse cursor: Find the small arrow cursor. Give me the coordinates of the arrow TIP (pointing end).
+2. Target element: Find the target described above. Give me a tight bounding box (x, y, width, height) around ONLY this element.
 
-IMPORTANT: You must respond with ONLY a single JSON object, no other text, no markdown, no newlines. The JSON must exactly follow this format:
+Respond with ONLY this JSON format (no other text):
 {"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high"}
 
-ACCURACY REQUIREMENTS:
-- Mouse position: Identify the ARROW TIP precisely (within 5 pixels)
-- Target position: Draw a TIGHT bounding box around ONLY the target
-- Both positions must be in the same coordinate system (screenshot pixels)`,
+Important:
+- Mouse position: arrow TIP coordinates
+- Target position: tight bounding box around the target element only
+- Both in screenshot pixel coordinates`,
                   },
                 ],
               },
