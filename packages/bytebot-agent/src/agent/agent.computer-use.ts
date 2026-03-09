@@ -598,8 +598,6 @@ CRITICAL:
         // 计算鼠标到边界框的距离
         // 如果鼠标在边界框内，距离为 0
         // 如果在边界框外，计算到最近边界的距离
-        let distanceX = 0;
-        let distanceY = 0;
         
         // X 方向距离
         if (mouse.x < bbox.x) {
@@ -647,10 +645,22 @@ CRITICAL:
 
       lastActualPosition = apiPosition;
 
-      // 检查是否满足停止条件
-      if (currentDeviation <= adaptiveThreshold) {
-        logger.debug(`Iteration ${iteration}: Deviation within adaptive threshold, stopping`);
-        break;
+        // 检查是否满足停止条件
+        // 如果有边界框，只有鼠标在边界框内才停止
+        // 如果没有边界框，使用偏差阈值判断
+        if (originalBoundingBox) {
+          // 有边界框：只有鼠标在边界框内才停止
+          if (distanceX === 0 && distanceY === 0) {
+            logger.debug(`Iteration ${iteration}: Mouse is within bounding box, stopping`);
+            break;
+          }
+        } else {
+          // 没有边界框：使用偏差阈值判断
+          if (currentDeviation <= adaptiveThreshold) {
+            logger.debug(`Iteration ${iteration}: Deviation within adaptive threshold, stopping`);
+            break;
+          }
+        }
       }
       
       if (isNearBoundingBox) {
@@ -665,7 +675,12 @@ CRITICAL:
     }
   }
 
-    const success = currentDeviation <= adaptiveThreshold;
+    // 判断是否成功
+    // 如果有边界框，只有鼠标在边界框内才算成功
+    // 如果没有边界框，使用偏差阈值判断
+    const success = originalBoundingBox 
+      ? (distanceX === 0 && distanceY === 0)  // 有边界框：必须在边界框内
+      : (currentDeviation <= adaptiveThreshold);  // 无边界框：偏差小于阈值
   logger.debug(
     `Iterative movement completed: ${success ? 'SUCCESS' : 'FAILED'}, ` +
       `iterations=${iteration}, final deviation=${currentDeviation.toFixed(2)}px`,
