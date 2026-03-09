@@ -26,6 +26,56 @@ import { Logger } from '@nestjs/common';
 
 const BYTEBOT_DESKTOP_BASE_URL = process.env.BYTEBOT_DESKTOP_BASE_URL as string;
 
+// 按键状态跟踪 - 用于检测和修复卡住的按键
+const pressedKeys = new Set<string>();
+const keyPressTimestamps = new Map<string, number>();
+const MAX_KEY_PRESS_DURATION = 5000; // 5 秒 - 按键按住的最大时长
+
+// 检查并释放长时间按住的按键
+async function checkAndReleaseStuckKeys(): Promise<void> {
+  const now = Date.now();
+  const stuckKeys: string[] = [];
+  
+  for (const [key, timestamp] of keyPressTimestamps.entries()) {
+    if (now - timestamp > MAX_KEY_PRESS_DURATION) {
+      stuckKeys.push(key);
+    }
+  }
+  
+  if (stuckKeys.length > 0) {
+    console.warn(`Detected stuck keys: ${stuckKeys.join(', ')}, releasing...`);
+    
+    try {
+      await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'press_keys',
+          keys: stuckKeys,
+          press: 'up',
+        }),
+      });
+      
+      // 清理状态
+      for (const key of stuckKeys) {
+        pressedKeys.delete(key);
+        keyPressTimestamps.delete(key);
+      }
+      
+      console.log(`Released stuck keys: ${stuckKeys.join(', ')}`);
+    } catch (error) {
+      console.error('Error releasing stuck keys:', error);
+    }
+  }
+}
+
+// 在每次操作前检查卡住的按键
+async function safeOperation<T>(operation: () => Promise<T>): Promise<T> {
+  await checkAndReleaseStuckKeys();
+  return operation();
+}
+
+
 // 计算文本输入的超时时间
 function calculateTextTimeout(text: string, delay?: number): number {
   const textLength = text.length;
@@ -1091,6 +1141,34 @@ async function pressKeys(input: { keys: string[]; press?: 'up' | 'down' }): Prom
     });
   } catch (error) {
     console.error('Error in press_keys action:', error);
+    throw error;
+  }
+}
+
+
+// 智能按键函数 - 自动按下并释放按键（适用于单次按键操作）
+async function smartPressKeys(keys: string[], holdDuration: number = 100): Promise<void> {
+  console.log(`Smart pressing keys: ${keys}`);
+  
+  try {
+    // 按下按键
+    await pressKeys({ keys, press: 'down' });
+    
+    // 等待一小段时间
+    await new Promise(resolve => setTimeout(resolve, holdDuration));
+    
+    // 释放按键
+    await pressKeys({ keys, press: 'up' });
+    
+    console.log(`Smart press completed: ${keys}`);
+  } catch (error) {
+    console.error('Error in smart press keys:', error);
+    // 确保按键被释放
+    try {
+      await pressKeys({ keys, press: 'up' });
+    } catch (releaseError) {
+      console.error('Error releasing keys:', releaseError);
+    }
     throw error;
   }
 }
