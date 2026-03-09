@@ -800,7 +800,7 @@ export async function handleComputerToolUse(
           button: block.input.button || 'left',
           clickCount: block.input.clickCount || 1,
           holdKeys: block.input.holdKeys,
-        });
+        }, logger);
       }
     if (isPressMouseToolUseBlock(block)) {
         // 按压前先移动到目标位置
@@ -1014,7 +1014,7 @@ async function clickMouse(input: {
   button: Button;
   clickCount: number;
   holdKeys?: string[];
-}): Promise<void> {
+}, logger?: Logger): Promise<void> {
   const { coordinates, button, clickCount, holdKeys } = input;
   console.log(
     `Clicking mouse: ${button} ${clickCount} times ${coordinates ? `at [${coordinates.x}, ${coordinates.y}]` : 'at current position'} ${holdKeys ? `with holdKeys: ${holdKeys}` : ''}`,
