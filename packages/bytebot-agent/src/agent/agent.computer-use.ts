@@ -1127,6 +1127,21 @@ async function typeKeys(input: { keys: string[]; delay?: number }): Promise<void
 async function pressKeys(input: { keys: string[]; press?: 'up' | 'down' }): Promise<void> {
   const press = input.press || 'down';
   const { keys } = input;
+  
+    // 定义修饰键（这些键需要按住）
+    const modifierKeys = ['Shift', 'Control', 'Alt', 'Meta', 'Command', 'Ctrl', 'Cmd'];
+    
+    // 检查是否都是修饰键
+    const allModifiers = keys.every(key => 
+      modifierKeys.some(mod => key.toLowerCase().includes(mod.toLowerCase()))
+    );
+    
+    // 如果不是修饰键，且 press='down'，自动按下并释放
+    if (!allModifiers && press === 'down') {
+      console.log(`Auto-releasing non-modifier keys: ${keys}`);
+      await smartPressKeys(keys, 100);
+      return;
+    }
   console.log(`Pressing keys: ${keys} (${press})`);
 
   try {
