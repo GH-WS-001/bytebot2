@@ -217,6 +217,19 @@ function safeParseLLMResponse(text: string | null | undefined): any | null {
   
   let jsonStr = match[0];
   
+  // 检测并修复不完整的 JSON（例如 "x": 后面被截断）
+  jsonStr = jsonStr
+    // 修复 "x": 后面没有值的情况
+    .replace(/"x"\s*:\s*$/gm, '"x": 0')
+    // 修复 "y": 后面没有值的情况
+    .replace(/"y"\s*:\s*$/gm, '"y": 0')
+    // 修复 "width": 后面没有值的情况
+    .replace(/"width"\s*:\s*$/gm, '"width": 20')
+    // 修复 "height": 后面没有值的情况
+    .replace(/"height"\s*:\s*$/gm, '"height": 20')
+    // 修复 "confidence": 后面没有值的情况
+    .replace(/"confidence"\s*:\s*$/gm, '"confidence": "low"');
+  
   try {
     return JSON.parse(jsonStr);
   } catch {
@@ -236,19 +249,12 @@ function safeParseLLMResponse(text: string | null | undefined): any | null {
     }
   }
 }
-/**
- * 迭代逼近移动鼠标
- * 使用LiteLLM分析截图，识别鼠标和目标位置，迭代调整直到偏差小于阈值
- */
 
 /**
  * 将 LLM 返回的目标位置转换为坐标
  * 支持单点坐标和边界框两种格式
  * @param target LLM 返回的目标位置（可能是单点或边界框）
  * @returns 单点坐标
- */
-/**
- * 规范化坐标函数（处理数组等情况）
  */
 function normalize(obj: any): Coordinates {
   if (Array.isArray(obj.x) && obj.x.length === 2) return { x: obj.x[0], y: obj.x[1] };
@@ -314,6 +320,237 @@ function isMouseNearBoundingBox(
   return withinX && withinY;
 }
 
+// ==================== 新增辅助函数（用于优化移动逻辑） ====================
+
+/**
+ * 清洗目标描述，去除冗余方位词
+ */
+function cleanTargetDescription(desc: string): string {
+    return desc
+        .replace(/(左下角|右下角|左上角|右上角|的|方块|卡片|按钮|菜单)/g, '')
+        .trim();
+}
+
+/**
+ * 验证坐标是否在合理屏幕范围内
+ */
+function isValidCoordinate(coord: any, screenWidth = 1920, screenHeight = 1080): boolean {
+    return coord && typeof coord.x === 'number' && typeof coord.y === 'number' &&
+           coord.x >= 0 && coord.x <= screenWidth &&
+           coord.y >= 0 && coord.y <= screenHeight;
+}
+
+/**
+ * 字段别名映射和标准化
+ */
+function normalizeFields(obj: any): any {
+    const mappings = {
+        mouse: ['mousePosition', 'cursor', 'mouse'],
+        target: ['targetPosition', 'bbox', 'element', 'target'],
+        width: ['width', 'w'],
+        height: ['height', 'h'],
+        confidence: ['confidence']
+    };
+    const result: any = {};
+    // 处理鼠标位置
+    for (const key of mappings.mouse) {
+        if (obj[key]) {
+            if (obj[key].x !== undefined && obj[key].y !== undefined) {
+                result.mousePosition = { x: obj[key].x, y: obj[key].y };
+            } else if (Array.isArray(obj[key]) && obj[key].length === 2) {
+                result.mousePosition = { x: obj[key][0], y: obj[key][1] };
+            }
+            break;
+        }
+    }
+    // 处理目标位置
+    for (const key of mappings.target) {
+        if (obj[key]) {
+            if (obj[key].x !== undefined && obj[key].y !== undefined) {
+                let width = obj[key].width, height = obj[key].height;
+                if (width === undefined) {
+                    for (const wk of mappings.width) {
+                        if (obj[key][wk] !== undefined) { width = obj[key][wk]; break; }
+                    }
+                }
+                if (height === undefined) {
+                    for (const hk of mappings.height) {
+                        if (obj[key][hk] !== undefined) { height = obj[key][hk]; break; }
+                    }
+                }
+                result.targetPosition = { x: obj[key].x, y: obj[key].y, width, height };
+            } else if (Array.isArray(obj[key])) {
+                if (obj[key].length >= 4) {
+                    result.targetPosition = { x: obj[key][0], y: obj[key][1], width: obj[key][2], height: obj[key][3] };
+                } else if (obj[key].length >= 2) {
+                    result.targetPosition = { x: obj[key][0], y: obj[key][1] };
+                }
+            }
+            break;
+        }
+    }
+    // 处理置信度
+    for (const key of mappings.confidence) {
+        if (obj[key]) {
+            result.confidence = obj[key];
+            break;
+        }
+    }
+    result.confidence = result.confidence || 'medium';
+    return result;
+}
+
+/**
+ * 增强版 JSON 解析：支持常见格式和字段别名
+ */
+function parseLLMResponse(text: string | null | undefined): any | null {
+    if (!text) return null;
+    let cleaned = text.replace(/```(json)?\s*/gi, '').replace(/```\s*$/gm, '').trim();
+
+    // 尝试直接解析整个响应
+    try {
+        const parsed = JSON.parse(cleaned);
+        return normalizeFields(parsed);
+    } catch {}
+
+    // 尝试解析数组格式（兼容所有已知变体）
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+        try {
+            const arr = JSON.parse(arrayMatch[0]);
+            if (Array.isArray(arr)) {
+                // 情况1：纯坐标数组 [x, y] 或 [x, y, w, h]
+                if (arr.length === 2) {
+                    return { mousePosition: { x: arr[0], y: arr[1] } };
+                }
+                if (arr.length === 4) {
+                    return { targetPosition: { x: arr[0], y: arr[1], width: arr[2], height: arr[3] } };
+                }
+
+                // 情况2：对象数组 - 合并所有信息
+                const result: any = {};
+                for (const item of arr) {
+                    // 提取鼠标位置（优先）
+                    if (item.mouse) {
+                        if (item.mouse.x !== undefined && item.mouse.y !== undefined) {
+                            result.mousePosition = { x: item.mouse.x, y: item.mouse.y };
+                        } else if (Array.isArray(item.mouse) && item.mouse.length >= 2) {
+                            result.mousePosition = { x: item.mouse[0], y: item.mouse[1] };
+                        }
+                    }
+
+                    // 提取目标位置（优先）
+                    if (item.target) {
+                        if (item.target.x !== undefined && item.target.y !== undefined) {
+                            const width = item.target.w ?? item.target.width;
+                            const height = item.target.h ?? item.target.height;
+                            result.targetPosition = {
+                                x: item.target.x,
+                                y: item.target.y,
+                                width: width,
+                                height: height
+                            };
+                        } else if (Array.isArray(item.target) && item.target.length >= 2) {
+                            result.targetPosition = { x: item.target[0], y: item.target[1] };
+                        }
+                    }
+
+                    // 处理 bbox_2d（后备）
+                    if (item.bbox_2d && Array.isArray(item.bbox_2d)) {
+                        const label = (item.label || '').toLowerCase();
+                        if (label.includes('mouse') || label.includes('cursor')) {
+                            // 鼠标位置：取前两个值
+                            result.mousePosition = { x: item.bbox_2d[0], y: item.bbox_2d[1] };
+                        } else {
+                            // 视为目标框
+                            if (item.bbox_2d.length >= 4) {
+                                const [x1, y1, x2, y2] = item.bbox_2d;
+                                result.targetPosition = {
+                                    x: x1,
+                                    y: y1,
+                                    width: Math.max(0, x2 - x1),
+                                    height: Math.max(0, y2 - y1)
+                                };
+                            } else if (item.bbox_2d.length >= 2) {
+                                // 单点目标
+                                result.targetPosition = { x: item.bbox_2d[0], y: item.bbox_2d[1] };
+                            }
+                        }
+                    }
+
+                    // 提取置信度
+                    if (item.confidence) {
+                        result.confidence = item.confidence;
+                    }
+                }
+
+                // 如果已经提取到鼠标或目标，返回结果
+                if (result.mousePosition || result.targetPosition) {
+                    return result;
+                }
+
+                // 降级：数组只有一项且包含 bbox_2d，直接作为目标框
+                if (arr.length === 1 && arr[0].bbox_2d && Array.isArray(arr[0].bbox_2d)) {
+                    const bbox = arr[0].bbox_2d;
+                    if (bbox.length >= 4) {
+                        const [x1, y1, x2, y2] = bbox;
+                        return {
+                            targetPosition: {
+                                x: x1,
+                                y: y1,
+                                width: Math.max(0, x2 - x1),
+                                height: Math.max(0, y2 - y1)
+                            }
+                        };
+                    } else if (bbox.length >= 2) {
+                        return { targetPosition: { x: bbox[0], y: bbox[1] } };
+                    }
+                }
+            }
+        } catch {}
+    }
+
+    // 修复常见错误并重试
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    let jsonStr = match[0]
+        .replace(/"x"\s*:\s*$/gm, '"x": 0')
+        .replace(/"y"\s*:\s*$/gm, '"y": 0')
+        .replace(/"width"\s*:\s*$/gm, '"width": 20')
+        .replace(/"height"\s*:\s*$/gm, '"height": 20')
+        .replace(/"confidence"\s*:\s*$/gm, '"confidence": "low"')
+        .replace(/'/g, '"')
+        .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3')
+        .replace(/,\s*}/g, '}')
+        .replace(/,\s*]/g, ']')
+        .replace(/"x"\s*:\s*(\d+)\s*,\s*(\d+)\s*}/g, '"x":$1,"y":$2}');
+
+    try {
+        const parsed = JSON.parse(jsonStr);
+        return normalizeFields(parsed);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 试探性移动一小步
+ */
+function getTentativeTarget(current: Coordinates, initial: Coordinates, step: number = 20): Coordinates {
+    const dx = initial.x - current.x;
+    const dy = initial.y - current.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance < step) return initial;
+    const ratio = step / distance;
+    return {
+        x: Math.round(current.x + dx * ratio),
+        y: Math.round(current.y + dy * ratio)
+    };
+}
+
+// ==================== 优化后的迭代移动函数 ====================
+
 async function moveMouseWithIterationApproach(
   targetCoordinates: Coordinates,
   targetDescription: string,
@@ -323,22 +560,32 @@ async function moveMouseWithIterationApproach(
 ): Promise<{ success: boolean; iterations: number; finalDeviation: number; finalPosition: Coordinates }> {
   // 如果 coordinates 是字符串，先解析为对象
   if (typeof targetCoordinates === 'string') {
+    const coordStr = targetCoordinates as string;
     try {
-      targetCoordinates = JSON.parse(targetCoordinates);
+      // 先尝试修复常见格式错误: {"x": 536, 448} -> {"x": 536, "y": 448}
+      let fixedStr = coordStr.replace(/"x"\s*:\s*(\d+)\s*,\s*(\d+)/g, '"x": $1, "y": $2');
+      targetCoordinates = JSON.parse(fixedStr);
       logger.debug('Parsed string coordinates:', targetCoordinates);
       if (Array.isArray(targetCoordinates) && targetCoordinates.length >= 2) {
         targetCoordinates = { x: targetCoordinates[0], y: targetCoordinates[1] };
         logger.debug('Converted array coordinates to object:', targetCoordinates);
       }
     } catch (e) {
-      logger.error('Failed to parse coordinates string:', targetCoordinates);
+      logger.error('Failed to parse coordinates string:', coordStr);
+      // 尝试使用正则直接提取数字
+      const match = coordStr.match(/"x"\s*:\s*(\d+)\s*,\s*(\d+)/);
+      if (match) {
+        targetCoordinates = { x: parseInt(match[1]), y: parseInt(match[2]) };
+        logger.debug('Extracted coordinates using regex:', targetCoordinates);
+      }
     }
   }
 
   // 修复常见格式错误: {"x": 704, 563} -> {"x": 704, "y": 563}
   if (targetCoordinates && typeof targetCoordinates.x === 'number' && typeof targetCoordinates.y === 'undefined') {
     const str = JSON.stringify(targetCoordinates);
-    const match = str.match(/"x":(\d+),(\d+)/);
+    // 更宽松的正则，匹配各种格式
+    const match = str.match(/"x"\s*:\s*(\d+)[,\s]+(\d+)/);
     if (match) {
       targetCoordinates = { x: parseInt(match[1]), y: parseInt(match[2]) };
       logger.debug('Fixed coordinates format:', targetCoordinates);
@@ -356,8 +603,10 @@ async function moveMouseWithIterationApproach(
     };
   }
 
+  // 清洗目标描述
+  const cleanDesc = cleanTargetDescription(targetDescription);
   logger.debug(`Starting iterative mouse movement to (${targetCoordinates.x}, ${targetCoordinates.y})`);
-  logger.debug(`Target description: ${targetDescription}`);
+  logger.debug(`Original target description: "${targetDescription}" -> cleaned: "${cleanDesc}"`);
 
   const initialTarget = { ...targetCoordinates };
 
@@ -368,9 +617,16 @@ async function moveMouseWithIterationApproach(
   let boundingBox: BoundingBox | null = null;
   let targetCenter: Coordinates | null = null;
   let success = false;
+  let lastValidParsed: any | null = null;                 // 上一次成功解析的数据
+  let lastValidBoundingBox: BoundingBox | null = null;    // 上一次成功的边界框
+  let lastValidTimestamp = 0;                              // 历史数据时间戳
 
   const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || 'http://bytebot-bytebot-llm-proxy-1:4000';
   const LITELLM_MODEL = process.env.LITELLM_MODEL || 'qwen3.5:35b';
+  const SCREEN_WIDTH = 1280;
+  const SCREEN_HEIGHT = 960;
+  const HISTORY_EXPIRY_MS = 30000; // 历史数据有效期 30 秒
+  const MAX_HISTORY_DISTANCE = 200; // 历史框中心与当前鼠标的最大合理距离
 
   logger.debug(`Using LiteLLM at ${LITELLM_BASE_URL} with model ${LITELLM_MODEL} for screenshot analysis`);
 
@@ -390,28 +646,25 @@ async function moveMouseWithIterationApproach(
         }),
       });
 
-      // 2. 获取物理鼠标位置（API 报告）
-      const posRes = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cursor_position' }),
-      });
-      const apiPos: Coordinates = await posRes.json();
+      // 2. 并发获取物理鼠标位置和截图
+      const [apiPos, screenshotData] = await Promise.all([
+        fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'cursor_position' })
+        }).then(res => res.json()),
+        fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'screenshot', includeCursor: true })
+        }).then(res => res.json())
+      ]);
+
       lastActualPosition = apiPos;
+      const screenshotBase64 = screenshotData.image;
       logger.debug(`Iteration ${iteration}: API mouse at (${apiPos.x}, ${apiPos.y})`);
 
-      // 3. 截图并用 AI 分析目标
-      const screenshotRes = await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'screenshot',
-          includeCursor: true,
-        }),
-      });
-      const screenshotData = await screenshotRes.json();
-      const screenshotBase64 = screenshotData.image;
-
+      // 3. 调用 LiteLLM 分析
       const llmRes = await fetch(`${LITELLM_BASE_URL}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -426,7 +679,7 @@ async function moveMouseWithIterationApproach(
                   type: 'text',
                   text: `Analyze this screenshot carefully.
 
-Target to find: ${targetDescription}
+Target to find: ${cleanDesc}
 
 Step 1 - Find the mouse cursor:
 - Look for a small arrow-shaped cursor (usually white with black outline)
@@ -442,14 +695,14 @@ Step 2 - Find the target element:
 
 Respond with ONLY this JSON (no other text):
 {"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high/low"}
-`,
-                },
-              ],
-            },
+`
+                }
+              ]
+            }
           ],
           max_tokens: 2000,
-          temperature: 0.1,
-        }),
+          temperature: 0.1
+        })
       });
 
       if (!llmRes.ok) {
@@ -457,20 +710,171 @@ Respond with ONLY this JSON (no other text):
       }
 
       const llmResult = await llmRes.json();
-      const responseText = llmResult.choices[0].message.content;
-      logger.debug(`Iteration ${iteration}: LiteLLM response: ${responseText}`);
+      const message = llmResult.choices[0].message;
+      const responseText = message.content;
+      
+      // 检查是否有 tool_calls（某些模型可能通过 tool_calls 返回结果）
+      let parsed: any = null;
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        logger.debug(`Iteration ${iteration}: LiteLLM returned tool_calls instead of content`);
+        for (const toolCall of message.tool_calls) {
+          if (toolCall.function && toolCall.function.arguments) {
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+              if (args.mousePosition || args.targetPosition || args.mouse || args.target) {
+                parsed = args;
+                logger.debug(`Iteration ${iteration}: Parsed from tool_calls: ${JSON.stringify(parsed)}`);
+                break;
+              }
+            } catch (e) {
+              logger.warn(`Iteration ${iteration}: Failed to parse tool_call arguments: ${toolCall.function.arguments}`);
+            }
+          }
+        }
+      }
+      
+      // 如果没有从 tool_calls 解析到，尝试从 content 解析
+      if (!parsed && message.content) {
+        logger.debug(`Iteration ${iteration}: LiteLLM response: ${responseText}`);
+        parsed = parseLLMResponse(message.content);
+      }
 
-      const parsed = safeParseLLMResponse(responseText);
+      // 结构化日志
+      logger.debug({
+        msg: 'AI response parsed',
+        iteration,
+        parsed: parsed ? {
+          mouse: parsed.mousePosition,
+          targetBox: parsed.targetPosition,
+          confidence: parsed.confidence
+        } : null,
+        rawResponse: message.content?.substring(0, 200)
+      });
+      
+      // 处理解析失败的情况
       if (!parsed) {
-        logger.error(`Iteration ${iteration}: Failed to parse AI response`);
-        targetCoordinates = getTentativeTarget(apiPos, initialTarget);
-        continue;
+        logger.error(`Iteration ${iteration}: Failed to parse AI response (content: ${message.content?.substring(0, 200)}, tool_calls: ${JSON.stringify(message.tool_calls)})`);
+        
+        const now = Date.now();
+        // 检查历史数据是否可用
+        const historyValid = lastValidParsed && lastValidBoundingBox &&
+                             (now - lastValidTimestamp < HISTORY_EXPIRY_MS);
+        if (historyValid) {
+          // 合理性检查：历史框中心与当前物理鼠标距离
+          const histCenter = {
+            x: lastValidBoundingBox!.x + lastValidBoundingBox!.width / 2,
+            y: lastValidBoundingBox!.y + lastValidBoundingBox!.height / 2
+          };
+          const distToHistory = Math.hypot(apiPos.x - histCenter.x, apiPos.y - histCenter.y);
+          if (distToHistory < MAX_HISTORY_DISTANCE) {
+            logger.warn(`Iteration ${iteration}: Using last valid parsed data as fallback (within expiry and reasonable distance)`);
+            boundingBox = lastValidBoundingBox;
+            lastAiMouse = apiPos;
+            // 现在确保非空（通过非空断言，因为已赋值）
+            const bb = boundingBox!;
+            const lm = lastAiMouse!;
+            targetCenter = {
+              x: bb.x + bb.width / 2,
+              y: bb.y + bb.height / 2,
+            };
+            
+            // 检查是否已在目标内
+            const INNER_MARGIN = Math.max(1, Math.min(5, Math.floor(bb.width * 0.05)));
+            const effectiveX = bb.x + INNER_MARGIN;
+            const effectiveY = bb.y + INNER_MARGIN;
+            const effectiveWidth = bb.width - 2 * INNER_MARGIN;
+            const effectiveHeight = bb.height - 2 * INNER_MARGIN;
+            
+            let insideEffective = false;
+            if (effectiveWidth > 0 && effectiveHeight > 0) {
+              insideEffective = lm.x >= effectiveX && lm.x <= effectiveX + effectiveWidth &&
+                                lm.y >= effectiveY && lm.y <= effectiveY + effectiveHeight;
+            } else {
+              insideEffective = lm.x >= bb.x && lm.x <= bb.x + bb.width &&
+                                lm.y >= bb.y && lm.y <= bb.y + bb.height;
+            }
+            
+            if (insideEffective) {
+              logger.debug(`Iteration ${iteration}: AI mouse is inside effective inner area (using fallback data), stopping`);
+              success = true;
+              break;
+            }
+            
+            // 继续向目标移动
+            const dx = targetCenter.x - lm.x;
+            const dy = targetCenter.y - lm.y;
+            currentDeviation = Math.sqrt(dx * dx + dy * dy);
+            targetCoordinates = {
+              x: Math.round(apiPos.x + dx),
+              y: Math.round(apiPos.y + dy),
+            };
+            logger.debug(`Iteration ${iteration}: Moving towards center (${targetCenter.x}, ${targetCenter.y}) using fallback data, deviation=${currentDeviation.toFixed(2)}`);
+            continue;
+          } else {
+            logger.warn('History data too far from current mouse, ignoring');
+          }
+        }
+        
+        if (iteration === 1) {
+          // 第一次迭代失败，使用初始目标坐标创建虚拟边界框
+          logger.warn(`Iteration ${iteration}: First iteration failed, using initial target coordinates as fallback`);
+          const VIRTUAL_BOX_SIZE = 20; // 虚拟边界框大小
+          boundingBox = {
+            x: initialTarget.x - VIRTUAL_BOX_SIZE / 2,
+            y: initialTarget.y - VIRTUAL_BOX_SIZE / 2,
+            width: VIRTUAL_BOX_SIZE,
+            height: VIRTUAL_BOX_SIZE,
+          };
+          lastAiMouse = apiPos;
+          lastValidBoundingBox = { ...boundingBox };
+          lastValidTimestamp = now;
+          
+          // 计算到目标的距离
+          const dx = initialTarget.x - apiPos.x;
+          const dy = initialTarget.y - apiPos.y;
+          currentDeviation = Math.sqrt(dx * dx + dy * dy);
+          
+          // 如果已经在目标附近，认为成功
+          if (currentDeviation <= deviationThreshold) {
+            logger.debug(`Iteration ${iteration}: Already at initial target, stopping`);
+            success = true;
+            break;
+          }
+          
+          // 继续向初始目标移动
+          targetCoordinates = {
+            x: Math.round(apiPos.x + dx),
+            y: Math.round(apiPos.y + dy),
+          };
+          logger.debug(`Iteration ${iteration}: Moving towards initial target (${initialTarget.x}, ${initialTarget.y}), deviation=${currentDeviation.toFixed(2)}`);
+          continue;
+        } else {
+          // 没有历史数据，使用试探性移动
+          targetCoordinates = getTentativeTarget(apiPos, initialTarget);
+          continue;
+        }
       }
 
       // 解析 AI 鼠标位置
-      const aiMouse = parsed.mousePosition ? normalize(parsed.mousePosition) : null;
+      let aiMouse = parsed.mousePosition ? 
+        (parsed.mousePosition.x !== undefined ? parsed.mousePosition : { x: parsed.mousePosition[0], y: parsed.mousePosition[1] }) : null;
       boundingBox = parsed.targetPosition?.width ? parsed.targetPosition as BoundingBox : null;
       const confidence = parsed.confidence || 'medium';
+      
+      // 坐标验证
+      if (aiMouse && !isValidCoordinate(aiMouse, SCREEN_WIDTH, SCREEN_HEIGHT)) {
+        logger.warn(`Iteration ${iteration}: AI mouse position out of range (${aiMouse.x},${aiMouse.y}), using API position instead`);
+        aiMouse = apiPos;
+      }
+      
+      // 保存成功解析的数据，用于后续迭代的降级处理
+      if (parsed && (aiMouse || boundingBox)) {
+        lastValidParsed = parsed;
+        if (boundingBox) {
+          lastValidBoundingBox = { ...boundingBox };
+          lastValidTimestamp = Date.now();
+        }
+      }
 
       if (!aiMouse) {
         logger.warn(`Iteration ${iteration}: AI did not provide mouse position, using API position for fallback`);
@@ -487,8 +891,8 @@ Respond with ONLY this JSON (no other text):
           y: boundingBox.y + boundingBox.height / 2,
         };
 
-        // 定义有效区域：向内缩进 5 像素（可调整）
-        const INNER_MARGIN = 5;
+        // 动态内缩边距
+        const INNER_MARGIN = Math.max(1, Math.min(5, Math.floor(boundingBox.width * 0.05)));
         const effectiveX = boundingBox.x + INNER_MARGIN;
         const effectiveY = boundingBox.y + INNER_MARGIN;
         const effectiveWidth = boundingBox.width - 2 * INNER_MARGIN;
@@ -526,7 +930,10 @@ Respond with ONLY this JSON (no other text):
         logger.debug(`Iteration ${iteration}: Moving towards center (${targetCenter.x}, ${targetCenter.y}), AI deviation=${currentDeviation.toFixed(2)}`);
       } else if (parsed.targetPosition && lastAiMouse) {
         // 无边界框但有目标点坐标
-        const targetPoint = normalize(parsed.targetPosition);
+        const targetPoint = parsed.targetPosition.width ?
+          { x: parsed.targetPosition.x + parsed.targetPosition.width / 2, y: parsed.targetPosition.y + parsed.targetPosition.height / 2 } :
+          (parsed.targetPosition.x !== undefined ? parsed.targetPosition : { x: parsed.targetPosition[0], y: parsed.targetPosition[1] });
+
         const dx = targetPoint.x - lastAiMouse.x;
         const dy = targetPoint.y - lastAiMouse.y;
         currentDeviation = Math.sqrt(dx * dx + dy * dy);
@@ -559,7 +966,7 @@ Respond with ONLY this JSON (no other text):
   // 最终成功判断（如果循环因 success=true 退出，已经正确；否则根据条件再次确认）
   if (!success) {
     if (boundingBox && lastAiMouse) {
-      const INNER_MARGIN = 5;
+      const INNER_MARGIN = Math.max(1, Math.min(5, Math.floor(boundingBox.width * 0.05)));
       const effectiveX = boundingBox.x + INNER_MARGIN;
       const effectiveY = boundingBox.y + INNER_MARGIN;
       const effectiveWidth = boundingBox.width - 2 * INNER_MARGIN;
@@ -588,23 +995,6 @@ Respond with ONLY this JSON (no other text):
     iterations: iteration,
     finalDeviation: currentDeviation,
     finalPosition: lastActualPosition || targetCoordinates,
-  };
-}
-
-/**
- * 辅助函数：试探性移动一小步
- */
-function getTentativeTarget(current: Coordinates, initial: Coordinates, step: number = 20): Coordinates {
-  const dx = initial.x - current.x;
-  const dy = initial.y - current.y;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  if (distance < step) {
-    return initial;
-  }
-  const ratio = step / distance;
-  return {
-    x: Math.round(current.x + dx * ratio),
-    y: Math.round(current.y + dy * ratio),
   };
 }
 
