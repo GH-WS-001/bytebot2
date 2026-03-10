@@ -1,6 +1,9 @@
 # Base image - using DaoCloud mirror for better connectivity in China
 FROM docker.m.daocloud.io/library/node:20-alpine
 
+# Configure Alpine to use mirrors (for better connectivity in China)
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
 # Configure npm to use registry mirror (for better connectivity in China)
 RUN npm config set registry https://registry.npmmirror.com
 

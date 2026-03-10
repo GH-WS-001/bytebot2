@@ -440,18 +440,9 @@ Step 2 - Find the target element:
 - The box should be as small as possible while containing the entire element
 - Give me: x, y (top-left corner), width, height
 
-Step 3 - Verify your answer:
-- Is the mouse cursor clearly visible? If not, set confidence to "low"
-- Is the target element clearly identified? If not, set confidence to "low"
-- Are the coordinates reasonable? (not 0,0 or very large numbers)
-
 Respond with ONLY this JSON (no other text):
-{"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high"}
-
-CRITICAL: 
-- If you cannot clearly see the mouse cursor, set confidence to "low"
-- If you cannot clearly identify the target, set confidence to "low"
-- Be honest about confidence - do not say "high" if you are uncertain`,
+{"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high/low"}
+`,
                 },
               ],
             },
