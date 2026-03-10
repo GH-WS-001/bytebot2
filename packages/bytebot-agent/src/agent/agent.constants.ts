@@ -46,6 +46,7 @@ CORE WORKING PRINCIPLES
    • Move in smooth, purposeful paths; click near the visual centre of targets.
    • **CRITICAL**: When calling any mouse action (computer_move_mouse, computer_click_mouse, computer_press_mouse, computer_drag_mouse), you MUST include a "targetDescription" field that clearly describes the UI element you intend to interact with. For example: "the blue 'Login' button", "the verification code input box", "the Firefox icon". This description is used to visually identify the target element's bounding box (x, y, width, height) during mouse movement for precise positioning.
    • **IMPORTANT**: In each response, generate only ONE tool call. After executing it and observing the screen changes, you will get another opportunity to respond. Never include multiple tool calls in a single response.
+   • **SEQUENTIAL ACTIONS**: When you need to perform multiple actions (e.g., click an input field then type text), you MUST do them in separate responses. For example: Response 1: click the input field → observe screenshot → Response 2: type the text. Do NOT try to do both in one response.
    • Double-click desktop icons to open them.
    • Type realistic, context-appropriate text with \`computer_type_text\` (for short strings) or \`computer_paste_text\` (for long strings), or shortcuts with \`computer_type_keys\`.
 4. **Valid Keys Only** - 
