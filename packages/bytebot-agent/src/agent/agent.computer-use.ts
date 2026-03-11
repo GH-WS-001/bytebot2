@@ -680,10 +680,10 @@ async function moveMouseWithIterationApproach(
                   text: `Locate "${targetDescription}" in the screenshot.
 Return ONLY a JSON object with:
 - mouse: {"x": pixel_x, "y": pixel_y} (coordinates of the mouse cursor tip, if visible; otherwise omit)
-- targetBox:: {"x": left_x, "y": top_y, "w": width_px, "h": height_px} (tight bounding box of the element)
+- target: {"x": left_x, "y": top_y, "w": width_px, "h": height_px} (tight bounding box of the element)
 - confidence: "high" | "medium" | "low" (your confidence level)
 
-Example: {"mouse":{"x":100,"y":200},"targetBox":{"x":300,"y":400,"w":50,"h":30},"confidence":"high"}
+Example: {"mouse":{"x":100,"y":200},"target":{"x":300,"y":400,"w":50,"h":30},"confidence":"high"}
 
 Constraints: coordinates must be integers between 0 and 1920 (x) and 0 and 1080 (y). If element not clearly visible, set confidence to "low".`
                 }
