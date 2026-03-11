@@ -80,20 +80,20 @@ async function safeOperation<T>(operation: () => Promise<T>): Promise<T> {
 function calculateTextTimeout(text: string, delay?: number): number {
   const textLength = text.length;
   
-  // 基础超时时间: 10 秒
-  const baseTimeout = 10000;
+  // 基础超时时间: 30 秒 (增加基础时间以应对网络延迟)
+  const baseTimeout = 30000;
   
   // 每个字符的额外时间（考虑输入延迟）
   // 如果有 delay，则每个字符需要 delay 毫秒
-  // 否则假设平均每个字符 50ms
-  const charTime = delay ? delay : 50;
+  // 否则假设平均每个字符 100ms (增加以应对系统负载)
+  const charTime = delay ? delay : 100;
   
   // 计算总时间: 基础时间 + 字符数 * 每字符时间
   const totalTime = baseTimeout + textLength * charTime;
   
-  // 最小 30 秒，最大 10 分钟
-  const minTimeout = 30000;
-  const maxTimeout = 600000; // 10 分钟
+  // 最小 60 秒，最大 15 分钟 (增加最大超时时间)
+  const minTimeout = 60000;
+  const maxTimeout = 900000; // 15 分钟
   
   const timeout = Math.max(minTimeout, Math.min(maxTimeout, totalTime));
   
@@ -1547,15 +1547,24 @@ async function typeText(input: { text: string; isSensitive?: boolean; delay?: nu
   console.log(`Typing text: ${isSensitive ? '●'.repeat(text.length) : text}${delay ? ` with delay ${delay}ms` : ''}`);
 
   try {
-    await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'type_text',
-        text,
-        delay,
-      }),
-    });
+    // 计算合适的超时时间
+    const timeout = calculateTextTimeout(text, delay);
+    console.log(`Using timeout: ${timeout}ms for typing ${text.length} characters`);
+
+    await fetchWithTimeout(
+      `${BYTEBOT_DESKTOP_BASE_URL}/computer-use`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'type_text',
+          text,
+          delay,
+        }),
+      },
+      timeout,
+      3 // 最多重试3次
+    );
   } catch (error) {
     console.error('Error in type_text action:', error);
     throw error;
