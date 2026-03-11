@@ -677,25 +677,15 @@ async function moveMouseWithIterationApproach(
                 { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
                 {
                   type: 'text',
-                  text: `Analyze this screenshot carefully.
+                  text: `Locate "${targetDescription}" in the screenshot.
+Return ONLY a JSON object with:
+- mouse: {"x": pixel_x, "y": pixel_y} (coordinates of the mouse cursor tip, if visible; otherwise omit)
+- targetBox:: {"x": left_x, "y": top_y, "w": width_px, "h": height_px} (tight bounding box of the element)
+- confidence: "high" | "medium" | "low" (your confidence level)
 
-Target to find: ${cleanDesc}
+Example: {"mouse":{"x":100,"y":200},"targetBox":{"x":300,"y":400,"w":50,"h":30},"confidence":"high"}
 
-Step 1 - Find the mouse cursor:
-- Look for a small arrow-shaped cursor (usually white with black outline)
-- The cursor is VERY SMALL (about 10-20 pixels)
-- Find the TIP of the arrow (the pointing end, usually top-left corner of cursor)
-- Give me the exact pixel coordinates of the arrow tip
-
-Step 2 - Find the target element:
-- Search for the element described above
-- Draw a TIGHT bounding box around it
-- The box should be as small as possible while containing the entire element
-- Give me: x, y (top-left corner), width, height
-
-Respond with ONLY this JSON (no other text):
-{"mousePosition":{"x":100,"y":200},"targetPosition":{"x":300,"y":400,"width":100,"height":50},"confidence":"high/low"}
-`
+Constraints: coordinates must be integers between 0 and 1920 (x) and 0 and 1080 (y). If element not clearly visible, set confidence to "low".`
                 }
               ]
             }
